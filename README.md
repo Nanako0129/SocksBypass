@@ -22,7 +22,7 @@ A fully functional iOS SOCKS5 proxy server application based on the microsocks p
 
 ## Screenshot
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/8945825f-0cbf-4d6b-bf03-6e97892a50cc" alt="screenshot">
+    <img src="https://github.com/user-attachments/assets/03d37bb4-308c-46f6-b3cb-077372cb7643" alt="screenshot">
 </p>
 
 
@@ -94,7 +94,7 @@ Based on [rofl0r/microsocks](https://github.com/rofl0r/microsocks)
 
 ## 截圖
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/8945825f-0cbf-4d6b-bf03-6e97892a50cc" alt="screenshot">
+    <img src="https://github.com/user-attachments/assets/03d37bb4-308c-46f6-b3cb-077372cb7643" alt="screenshot">
 </p>
 
 ## 安裝說明
