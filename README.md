@@ -20,6 +20,12 @@ A fully functional iOS SOCKS5 proxy server application based on the microsocks p
 - Uses silent audio to keep app running in background
 - Does not interfere with other apps' audio playback
 
+## Screenshot
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/8945825f-0cbf-4d6b-bf03-6e97892a50cc" alt="screenshot">
+</p>
+
+
 ## Installation Guide
 
 1. Clone the project:
@@ -85,6 +91,11 @@ Based on [rofl0r/microsocks](https://github.com/rofl0r/microsocks)
 - 支援 iOS 背景模式
 - 使用無聲音訊保持應用程式在背景運作
 - 不影響其他應用程式的音訊播放
+
+## 截圖
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/8945825f-0cbf-4d6b-bf03-6e97892a50cc" alt="screenshot">
+</p>
 
 ## 安裝說明
 
