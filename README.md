@@ -30,7 +30,7 @@ A fully functional iOS SOCKS5 proxy server application based on the microsocks p
 
 1. Clone the project:
 ```bash
-git clone --recursive https://github.com/yourusername/iOS-SOCKS-Server.git
+git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
 ```
 
 2. Open Xcode project:
@@ -101,7 +101,7 @@ Based on [rofl0r/microsocks](https://github.com/rofl0r/microsocks)
 
 1. Clone 專案:
 ```bash
-git clone --recursive https://github.com/yourusername/iOS-SOCKS-Server.git
+git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
 ```
 
 2. 開啟 Xcode 專案:
