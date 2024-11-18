@@ -101,7 +101,7 @@ void custom_log(const char *format, ...) {
     sharedInstance = self;
     
     // Configure log text view
-    self.logTextView.font = [UIFont fontWithName:@"Menlo-Regular" size:12.0];
+    self.logTextView.font = [UIFont fontWithName:@"Menlo-Regular" size:9.0];
     self.logTextView.textContainerInset = UIEdgeInsetsMake(10, 10, 10, 10);
     self.logTextView.layer.cornerRadius = 8.0;
     self.logTextView.layer.borderWidth = 1.0;
@@ -125,6 +125,25 @@ void custom_log(const char *format, ...) {
         const char *argv[] = {"microsocks", "-p", portbuf, NULL};
         
         NSString *ipAddress = [AppDelegate deviceIPAddress];
+        if ([ipAddress isEqualToString:@"127.0.0.1"]) {
+            [self logMessage:@"[SOCKS] No matching interface found, using fallback IP address"];
+            [self logMessage:@"[SOCKS] Stopping server due to no valid interface"];
+            dispatch_async(dispatch_get_main_queue(), ^{
+                UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"No Network Interface"
+                                                                             message:@"Please enable Personal Hotspot in Settings and try again."
+                                                                      preferredStyle:UIAlertControllerStyleAlert];
+                UIAlertAction *okAction = [UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault
+                                                               handler:^(UIAlertAction * action) {
+                    [self.statusLabel setText:@"Not Running - No Network Interface"];
+                    [self.audioPlayer stop];
+                    [[AVAudioSession sharedInstance] setActive:NO error:nil];
+                    [[UIApplication sharedApplication] performSelector:@selector(terminate:) withObject:nil afterDelay:0.0];
+                }];
+                [alert addAction:okAction];
+                [self presentViewController:alert animated:YES completion:nil];
+            });
+            return;
+        }
         [self logMessage:[NSString stringWithFormat:@"[SOCKS] Starting server at %@:%d", ipAddress, port]];
         
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -176,6 +195,13 @@ void custom_log(const char *format, ...) {
                                                     selector:@selector(updateStatsDisplay)
                                                     userInfo:nil
                                                      repeats:YES];
+    
+    // 確保初始文本也使用正確的字體
+    NSMutableAttributedString *initialText = [[NSMutableAttributedString alloc] initWithString:@""];
+    [initialText addAttribute:NSFontAttributeName 
+                       value:[UIFont fontWithName:@"Menlo-Regular" size:9.0] 
+                       range:NSMakeRange(0, 0)];
+    self.logTextView.attributedText = initialText;
 }
 
 - (void)didReceiveMemoryWarning {
@@ -194,7 +220,7 @@ void custom_log(const char *format, ...) {
         
         // Timestamp in gray
         NSAttributedString *timeString = [[NSAttributedString alloc] 
-            initWithString:[NSString stringWithFormat:@"[%@] ", timestamp]
+            initWithString:[NSString stringWithFormat:@"[%@]", timestamp]
             attributes:@{NSForegroundColorAttributeName: [UIColor grayColor]}];
         [attributedMessage appendAttributedString:timeString];
         
@@ -218,6 +244,11 @@ void custom_log(const char *format, ...) {
         NSMutableAttributedString *currentText = [[NSMutableAttributedString alloc] 
             initWithAttributedString:self.logTextView.attributedText ?: [[NSAttributedString alloc] init]];
         [currentText appendAttributedString:attributedMessage];
+        
+        // 為整個文本設置字體
+        [currentText addAttribute:NSFontAttributeName 
+                           value:[UIFont fontWithName:@"Menlo-Regular" size:9.0] 
+                           range:NSMakeRange(0, currentText.length)];
         
         // 檢查並限制行數
         NSArray *lines = [currentText.string componentsSeparatedByString:@"\n"];
