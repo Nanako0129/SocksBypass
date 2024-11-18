@@ -30,6 +30,7 @@
     if (success == 0) {
         [ViewController logMessage:@"[SOCKS] Successfully retrieved network interfaces"];
         temp_addr = interfaces;
+        address = [NSString stringWithUTF8String:"127.0.0.1"];
         while (temp_addr != NULL) {
             if (temp_addr->ifa_addr->sa_family == AF_INET) {
                 NSString *interfaceName = [NSString stringWithUTF8String:temp_addr->ifa_name];
@@ -37,9 +38,15 @@
                 if ([interfaceName isEqualToString:@"bridge100"]) {
                     address = [NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)];
                     [ViewController logMessage:[NSString stringWithFormat:@"[SOCKS] Found IP address: %@", address]];
+                } else if ([interfaceName isEqualToString:@"en0"]) {
+                    address = [NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)];
+                    [ViewController logMessage:[NSString stringWithFormat:@"[SOCKS] Found IP address: %@", address]];
                 }
             }
             temp_addr = temp_addr->ifa_next;
+        }
+        if ([address isEqualToString:@"127.0.0.1"]) {
+            [ViewController logMessage:@"[SOCKS] No matching interface found"];
         }
     } else {
         [ViewController logMessage:@"[SOCKS] Failed to get network interfaces"];
