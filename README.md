@@ -52,9 +52,11 @@ git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
    - Port: (displayed port)
    - No authentication required
 
+p.s. if you want to use USB connection instead of WiFi you can use [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios) forward mode: `ios forward 1080 9876`
+
 ## Notes
 
-- This app requires devices to be on the same WiFi network or personal hotspot
+- This app requires devices to be on the same WiFi network, personal hotspot or USB connection
 - Due to iOS limitations, app must remain active in foreground or background
 - Not recommended for App Store distribution due to potential policy violations
 
@@ -123,9 +125,11 @@ git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
    - 連接埠: (顯示的連接埠)
    - 不需要認證
 
+如果你想使用 USB 连接而不是 WiFi，可以使用 [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios) 的转发模式：`ios forward 1080 9876`。
+
 ## 注意事項
 
-- 此應用程式需要在同一個 WiFi 網路或個人熱點下使用
+- 此應用程式需要在同一個 WiFi 網路、個人熱點或透過 USB 連線下使用。
 - 由於 iOS 的限制，應用程式必須保持在前景或背景執行
 - 不建議透過 App Store 發布，因為可能違反相關政策
 

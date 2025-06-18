@@ -30,7 +30,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <signal.h>
-#include <poll.h>
+#include <sys/event.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
 #include <errno.h>
@@ -329,37 +329,65 @@ static void update_traffic_stats(size_t uploaded, size_t downloaded) {
     pthread_mutex_unlock(&stats_mutex);
 }
 static void copyloop(int fd1, int fd2) {
-    struct pollfd fds[2] = {
-        [0] = {.fd = fd1, .events = POLLIN},
-        [1] = {.fd = fd2, .events = POLLIN},
-    };
+    int kq = kqueue();
+    if (kq == -1) {
+        perror("kqueue");
+        return;
+    }
 
-    while(1) {
-        switch(poll(fds, 2, 60*15*1000)) {
-            case 0:
-                return;
-            case -1:
-                if(errno == EINTR || errno == EAGAIN) continue;
-                else perror("poll");
-                return;
+    struct kevent events[2];
+    struct kevent changes[2];
+
+    EV_SET(&changes[0], fd1, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, NULL);
+    EV_SET(&changes[1], fd2, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, NULL);
+
+    if (kevent(kq, changes, 2, NULL, 0, NULL) == -1) {
+        perror("kevent");
+        close(kq);
+        return;
+    }
+
+    while (1) {
+        int nev = kevent(kq, NULL, 0, events, 2, NULL);
+        if (nev == -1) {
+            if (errno == EINTR || errno == EAGAIN) continue;
+            perror("kevent");
+            break;
+        } else if (nev == 0) {
+            break; // Timeout reached (if applicable)
         }
-        int infd = (fds[0].revents & POLLIN) ? fd1 : fd2;
-        int outfd = infd == fd2 ? fd1 : fd2;
-        char buf[1024];
-        ssize_t sent = 0, n = read(infd, buf, sizeof buf);
-        if(n <= 0) return;
-        while(sent < n) {
-            ssize_t m = write(outfd, buf+sent, n-sent);
-            if(m < 0) return;
-            sent += m;
-        }
-        
-        if(infd == fd1) {
-            update_traffic_stats(n, 0);
-        } else {
-            update_traffic_stats(0, n);
+
+        for (int i = 0; i < nev; i++) {
+            int infd = (int)events[i].ident;
+            int outfd = (infd == fd1) ? fd2 : fd1;
+
+            if (events[i].filter == EVFILT_READ) {
+                char buf[1024];
+                ssize_t sent = 0, n = read(infd, buf, sizeof(buf));
+                if (n <= 0) {
+                    close(kq);
+                    return;
+                }
+
+                while (sent < n) {
+                    ssize_t m = write(outfd, buf + sent, n - sent);
+                    if (m < 0) {
+                        close(kq);
+                        return;
+                    }
+                    sent += m;
+                }
+
+                if (infd == fd1) {
+                    update_traffic_stats(n, 0);
+                } else {
+                    update_traffic_stats(0, n);
+                }
+            }
         }
     }
+
+    close(kq);
 }
 
 // caller must free socks5_addr manually
@@ -398,12 +426,21 @@ int compare_fd_socks5addr_by_addrport(char* item1, char* item2) {
 }
 
 static void copy_loop_udp(int tcp_fd, int udp_fd) {
-    // add tcp_fd and udp_fd to poll    
-    int poll_fds = 2;
-    struct pollfd fds[1024] = {
-        [0] = {.fd = tcp_fd, .events = POLLIN},
-        [1] = {.fd = udp_fd, .events = POLLIN},
-    };
+    int kq = kqueue();
+    if (kq == -1) {
+        perror("kqueue");
+        return;
+    }
+
+    struct kevent changes[2];
+    EV_SET(&changes[0], tcp_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+    EV_SET(&changes[1], udp_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+
+    if (kevent(kq, changes, 2, NULL, 0, NULL) == -1) {
+        perror("kevent");
+        close(kq);
+        return;
+    }
 
     int udp_is_bound = 1;
     union sockaddr_union client_addr;
@@ -420,91 +457,98 @@ static void copy_loop_udp(int tcp_fd, int udp_fd) {
     ssize_t n, ret;
     struct fd_socks5addr item;
     sblist* sock_list = sblist_new(sizeof(struct fd_socks5addr), 1);
-    while(1) {
-        switch(poll(fds, poll_fds, 60*15*1000)) {
-            case 0:
-                goto UDP_LOOP_END;
-            case -1:
-                if(errno == EINTR || errno == EAGAIN) continue;
-                else perror("poll");
-                goto UDP_LOOP_END;
+
+    while (1) {
+        struct kevent events[1024];
+        int nev = kevent(kq, NULL, 0, events, 1024, NULL);
+        if (nev == -1) {
+            if (errno == EINTR || errno == EAGAIN) continue;
+            perror("kevent");
+            goto UDP_LOOP_END;
         }
 
-        // support up to 1024 bytes of data
-        unsigned char buf[MAX_SOCKS5_HEADER_LEN + 1024];
-        // TCP socket
-        if (fds[0].revents & POLLIN) {
-            n = read(fds[0].fd, buf, sizeof(buf) - 1);
-            if (n == 0) {
-                // SOCKS5 TCP connection closed
-                goto UDP_LOOP_END;
-            }
-            if (n == -1) {
-                if(errno == EINTR || errno == EAGAIN) continue;
-                else perror("read from tcp socket");
-                goto UDP_LOOP_END;
-            }
-            buf[n - 1] = '\0';
-            dprintf(1, "received unexpectedly from TCP socket in UDP associate: %s", buf);
-        }
+        for (int i = 0; i < nev; i++) {
+            int fd = (int)events[i].ident;
 
-        // client UDP socket
-        if (fds[1].revents & POLLIN) {
-            if (!udp_is_bound) {
-                socklen = sizeof client_addr;
-                n = recvfrom(udp_fd, buf, sizeof(buf), 0, (struct sockaddr*)&client_addr, &socklen);
-            } else {
-                n = recv(udp_fd, buf, sizeof(buf), 0);
-            }
-            if (n == -1) {
-                if(errno == EINTR || errno == EAGAIN) continue;
-                perror("recv from udp socket");
-                goto UDP_LOOP_END;
-            }
-            if (!udp_is_bound) {
-                if (connect(udp_fd, (const struct sockaddr*)&client_addr, socklen)) {
-                    perror("connect");
+            // support up to 1024 bytes of data
+            unsigned char buf[MAX_SOCKS5_HEADER_LEN + 1024];
+
+            // TCP socket
+            if (fd == tcp_fd) {
+                n = read(fd, buf, sizeof(buf) - 1);
+                if (n == 0) {
+                    // SOCKS5 TCP connection closed
                     goto UDP_LOOP_END;
                 }
-                udp_is_bound = 1;
-                dprintf(1, "fd %d is bound now\n", udp_fd);
-            }
-        
-            ssize_t offset = extract_udp_data(buf, n, &item.addrport);
-            if (offset < 0) {
-                dprintf(2, "failed to extract from udp packet %ld", offset);
-                goto UDP_LOOP_END;
+                if (n == -1) {
+                    if (errno == EINTR || errno == EAGAIN) continue;
+                    perror("read from tcp socket");
+                    goto UDP_LOOP_END;
+                }
+                buf[n - 1] = '\0';
+                dprintf(1, "received unexpectedly from TCP socket in UDP associate: %s", buf);
             }
 
-            int send_fd = 0;
-            int idx = sblist_search(sock_list, (char*)&item, compare_fd_socks5addr_by_addrport);
-            if (idx != -1) {
-                struct fd_socks5addr* item_found = (struct fd_socks5addr*)sblist_item_from_index(sock_list, idx);
-                send_fd = item_found->fd;
-            } else {
-                union sockaddr_union target_addr;
-                ret = resolveSocks5Addrport(&item.addrport, UDP_SOCKET, &target_addr);
-                if (ret < 0) {
-                    dprintf(2, "failed to resolve socks5 addrport, %ld", ret);
+            // client UDP socket
+            if (fd == udp_fd) {
+                if (!udp_is_bound) {
+                    socklen = sizeof client_addr;
+                    n = recvfrom(udp_fd, buf, sizeof(buf), 0, (struct sockaddr*)&client_addr, &socklen);
+                } else {
+                    n = recv(udp_fd, buf, sizeof(buf), 0);
+                }
+                if (n == -1) {
+                    if (errno == EINTR || errno == EAGAIN) continue;
+                    perror("recv from udp socket");
+                    goto UDP_LOOP_END;
+                }
+                if (!udp_is_bound) {
+                    if (connect(udp_fd, (const struct sockaddr*)&client_addr, socklen)) {
+                        perror("connect");
+                        goto UDP_LOOP_END;
+                    }
+                    udp_is_bound = 1;
+                    dprintf(1, "fd %d is bound now\n", udp_fd);
+                }
+
+                ssize_t offset = extract_udp_data(buf, n, &item.addrport);
+                if (offset < 0) {
+                    dprintf(2, "failed to extract from udp packet %ld", offset);
                     goto UDP_LOOP_END;
                 }
 
-                // create a new socket
-                int fd = socket(SOCKADDR_UNION_AF(&target_addr), SOCK_DGRAM, 0);
-                if (-1 == connect(fd, (const struct sockaddr*)&target_addr, ((const struct sockaddr*)&target_addr)->sa_len)) {
-                    perror("connect");
-                    send_error(tcp_fd, EC_GENERAL_FAILURE);
-                    goto UDP_LOOP_END;
-                }
-                item.fd = fd;
-                sblist_add(sock_list, &item);
+                int send_fd = 0;
+                int idx = sblist_search(sock_list, (char*)&item, compare_fd_socks5addr_by_addrport);
+                if (idx != -1) {
+                    struct fd_socks5addr* item_found = (struct fd_socks5addr*)sblist_item_from_index(sock_list, idx);
+                    send_fd = item_found->fd;
+                } else {
+                    union sockaddr_union target_addr;
+                    ret = resolveSocks5Addrport(&item.addrport, UDP_SOCKET, &target_addr);
+                    if (ret < 0) {
+                        dprintf(2, "failed to resolve socks5 addrport, %ld", ret);
+                        goto UDP_LOOP_END;
+                    }
 
-                // add to polling fds
-                fds[poll_fds].fd = fd;
-                fds[poll_fds].events = POLL_IN;
-                poll_fds++;
-                send_fd = fd;
-                if (CONFIG_LOG) {
+                    // create a new socket
+                    int fd = socket(SOCKADDR_UNION_AF(&target_addr), SOCK_DGRAM, 0);
+                    if (-1 == connect(fd, (const struct sockaddr*)&target_addr, ((const struct sockaddr*)&target_addr)->sa_len)) {
+                        perror("connect");
+                        send_error(tcp_fd, EC_GENERAL_FAILURE);
+                        goto UDP_LOOP_END;
+                    }
+                    item.fd = fd;
+                    sblist_add(sock_list, &item);
+
+                    // add to kqueue
+                    struct kevent new_event;
+                    EV_SET(&new_event, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+                    if (kevent(kq, &new_event, 1, NULL, 0, NULL) == -1) {
+                        perror("kevent");
+                        goto UDP_LOOP_END;
+                    }
+                    send_fd = fd;
+                    if (CONFIG_LOG) {
                         char targetname[256];
                         int af = SOCKADDR_UNION_AF(&target_addr);
                         void *ipdata = SOCKADDR_UNION_ADDRESS(&target_addr);
@@ -512,20 +556,17 @@ static void copy_loop_udp(int tcp_fd, int udp_fd) {
                         inet_ntop(af, ipdata, targetname, sizeof targetname);
                         dolog("UDP fd[%d] remote address is %s:%d\n", send_fd, targetname, port);
                     }
-
+                }
+                ssize_t ret = send(send_fd, buf + offset, n - offset, 0);
+                if (ret < 0) {
+                    perror("send");
+                    goto UDP_LOOP_END;
+                }
             }
-            ssize_t ret = send(send_fd, buf + offset, n - offset, 0);
-            if (ret < 0) {
-                perror("send");
-                goto UDP_LOOP_END;
-            }
-        }
 
-        // UDP sockets for target addresses
-        int i;
-        for (i = 2; i < poll_fds; i++) {
-            if (fds[i].revents & POLLIN) {
-                item.fd = fds[i].fd;
+            // UDP sockets for target addresses
+            if (fd != tcp_fd && fd != udp_fd) {
+                item.fd = fd;
                 int idx = sblist_search(sock_list, (char *)&item, compare_fd_socks5addr_by_fd);
                 if (idx == -1) {
                     dprintf(2, "UDP socket not found");
@@ -564,7 +605,7 @@ static void copy_loop_udp(int tcp_fd, int udp_fd) {
                 }
                 buf[offset++] = addrport->port >> 8;
                 buf[offset++] = addrport->port & 0xFF;
-                n = recv(fds[i].fd, buf + offset, sizeof(buf) - offset, 0);
+                n = recv(fd, buf + offset, sizeof(buf) - offset, 0);
                 if(n <= 0) {
                     perror("recv from target address");
                     goto UDP_LOOP_END;
@@ -577,10 +618,14 @@ static void copy_loop_udp(int tcp_fd, int udp_fd) {
             }
         }
     }
+
 UDP_LOOP_END:
-    for (int i = 2; i < poll_fds; i++)
-        close(fds[i].fd);
+    for (int i = 0; i < sblist_getsize(sock_list); i++) {
+        struct fd_socks5addr *item = (struct fd_socks5addr*)sblist_item_from_index(sock_list, i);
+        close(item->fd);
+    }
     sblist_free(sock_list);
+    close(kq);
 }
 
 static enum errorcode check_credentials(unsigned char* buf, size_t n) {
