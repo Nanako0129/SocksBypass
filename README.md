@@ -52,7 +52,7 @@ git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
    - Port: (displayed port)
    - No authentication required
 
-p.s. if you want to use USB connection instead of WiFi you can use [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios) forward mode: `ios forward 1080 9876`
+p.s. if you want to use USB connection instead of WiFi you can use [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios) forward mode: `ios forward 1080 9876`, IP Address: `127.0.0.1`
 
 ## Notes
 
@@ -125,7 +125,7 @@ git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
    - 連接埠: (顯示的連接埠)
    - 不需要認證
 
-如果你想使用 USB 连接而不是 WiFi，可以使用 [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios) 的转发模式：`ios forward 1080 9876`。
+如果你想使用 USB 連接，而不是 WiFi，可以使用 [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios) 的轉發模式：`ios forward 1080 9876`，ip地址為：`127.0.0.1`。
 
 ## 注意事項
 
