@@ -9,9 +9,11 @@
 #import "ViewController.h"
 #import "AppDelegate.h"
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 #include <stdarg.h>
 #include <pthread.h>
+#include "hev-main.h"
 
 @interface ViewController ()
 
@@ -19,9 +21,6 @@
 
 @implementation ViewController
 
-extern int socks_main(int argc, const char** argv);
-extern void custom_log(const char *format, ...);
-extern void update_traffic_stats_ui(uint64_t uploadBytes, uint64_t downloadBytes);
 static ViewController *sharedInstance = nil;
 
 #define MAX_LOG_LINES 1000
@@ -78,24 +77,6 @@ static pthread_mutex_t pending_stats_mutex = PTHREAD_MUTEX_INITIALIZER;
     lastUpdateTime = now;
 }
 
-void update_traffic_stats_ui(uint64_t uploadBytes, uint64_t downloadBytes) {
-    pthread_mutex_lock(&pending_stats_mutex);
-    pending_upload_bytes = uploadBytes;
-    pending_download_bytes = downloadBytes;
-    pthread_mutex_unlock(&pending_stats_mutex);
-}
-void custom_log(const char *format, ...) {
-    char buffer[1024];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    
-    [ViewController logFromC:buffer];
-    // Also write to stderr for Xcode console
-    fprintf(stderr, "%s\n", buffer);
-}
-
 - (void)viewDidLoad {
     [super viewDidLoad];
     sharedInstance = self;
@@ -111,19 +92,12 @@ void custom_log(const char *format, ...) {
     // Enable attributed text
     self.logTextView.attributedText = [[NSAttributedString alloc] init];
     
-    freopen("/dev/null", "w", stdout);
-    dup2(STDOUT_FILENO, STDERR_FILENO);
-    
     [self logMessage:@"[SOCKS] View controller loaded"];
 
     int port = 9876;
     [self logMessage:[NSString stringWithFormat:@"[SOCKS] Initializing SOCKS server on port %d", port]];
     
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        char portbuf[32];
-        sprintf(portbuf, "%d", port);
-        const char *argv[] = {"microsocks", "-p", portbuf, NULL};
-        
         NSString *ipAddress = [AppDelegate deviceIPAddress];
         if ([ipAddress isEqualToString:@"127.0.0.1"]) {
             [self logMessage:@"[SOCKS] No matching interface found, using fallback IP address"];
@@ -144,15 +118,28 @@ void custom_log(const char *format, ...) {
             });
             return;
         }
-        [self logMessage:[NSString stringWithFormat:@"[SOCKS] Starting server at %@:%d", ipAddress, port]];
-        
+        [self logMessage:[NSString stringWithFormat:@"[SOCKS] Starting HEV SOCKS5 server at %@:%d", ipAddress, port]];
+
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.statusLabel setText:[NSString stringWithFormat:@"Running at %@:%d", ipAddress, port]];
         });
-        
-        int status = socks_main(3, argv);
+
+        // Build YAML config for hev-socks5-server
+        NSString *yamlConfig = [NSString stringWithFormat:
+            @"main:\n"
+             "  workers: 4\n"
+             "  port: %d\n"
+             "  listen-address: '0.0.0.0'\n"
+             "misc:\n"
+             "  log-file: stderr\n"
+             "  log-level: warn\n",
+            port];
+
+        const char *configStr = [yamlConfig UTF8String];
+        int status = hev_socks5_server_main_from_str((const unsigned char *)configStr,
+                                                     (unsigned int)strlen(configStr));
         [self logMessage:[NSString stringWithFormat:@"[SOCKS] Server exited with status: %d", status]];
-        
+
         dispatch_async(dispatch_get_main_queue(), ^{
             [self.statusLabel setText:[NSString stringWithFormat:@"Failed to start: %d", status]];
         });

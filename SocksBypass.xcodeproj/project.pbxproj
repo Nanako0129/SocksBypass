@@ -13,10 +13,8 @@
 		7F1F272B212A29D600540E3A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F272A212A29D600540E3A /* Assets.xcassets */; };
 		7F1F272E212A29D600540E3A /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F272C212A29D600540E3A /* LaunchScreen.storyboard */; };
 		7F1F2731212A29D600540E3A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2730212A29D600540E3A /* main.m */; };
-		7F4FA084212A2AD000F14A55 /* server.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA080212A2AD000F14A55 /* server.c */; };
-		7F4FA085212A2AD000F14A55 /* sblist.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA081212A2AD000F14A55 /* sblist.c */; };
-		7F4FA086212A2AD000F14A55 /* sockssrv.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA082212A2AD000F14A55 /* sockssrv.c */; };
 		7FCF1EA3212B2C8C00B5D14D /* blank.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7FCF1EA2212B2C8C00B5D14D /* blank.wav */; };
+		AE1B2C3D4E5F6A7B8C9D0E2F /* HevSocks5Server.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = AE1B2C3D4E5F6A7B8C9D0E1F /* HevSocks5Server.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,10 +28,8 @@
 		7F1F272D212A29D600540E3A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		7F1F272F212A29D600540E3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		7F1F2730212A29D600540E3A /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
-		7F4FA080212A2AD000F14A55 /* server.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = server.c; path = microsocks/server.c; sourceTree = SOURCE_ROOT; };
-		7F4FA081212A2AD000F14A55 /* sblist.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = sblist.c; path = microsocks/sblist.c; sourceTree = SOURCE_ROOT; };
-		7F4FA082212A2AD000F14A55 /* sockssrv.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = sockssrv.c; path = microsocks/sockssrv.c; sourceTree = SOURCE_ROOT; };
 		7FCF1EA2212B2C8C00B5D14D /* blank.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = blank.wav; sourceTree = "<group>"; };
+		AE1B2C3D4E5F6A7B8C9D0E1F /* HevSocks5Server.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = HevSocks5Server.xcframework; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -41,6 +37,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AE1B2C3D4E5F6A7B8C9D0E2F /* HevSocks5Server.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -67,9 +64,7 @@
 			isa = PBXGroup;
 			children = (
 				7FCF1EA2212B2C8C00B5D14D /* blank.wav */,
-				7F4FA081212A2AD000F14A55 /* sblist.c */,
-				7F4FA080212A2AD000F14A55 /* server.c */,
-				7F4FA082212A2AD000F14A55 /* sockssrv.c */,
+				AE1B2C3D4E5F6A7B8C9D0E1F /* HevSocks5Server.xcframework */,
 				7F1F2721212A29D600540E3A /* AppDelegate.h */,
 				7F1F2722212A29D600540E3A /* AppDelegate.m */,
 				7F1F2724212A29D600540E3A /* ViewController.h */,
@@ -158,9 +153,6 @@
 				7F1F2726212A29D600540E3A /* ViewController.m in Sources */,
 				7F1F2731212A29D600540E3A /* main.m in Sources */,
 				7F1F2723212A29D600540E3A /* AppDelegate.m in Sources */,
-				7F4FA086212A2AD000F14A55 /* sockssrv.c in Sources */,
-				7F4FA084212A2AD000F14A55 /* server.c in Sources */,
-				7F4FA085212A2AD000F14A55 /* sblist.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -296,6 +288,15 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 2LJ882GPY8;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/HevSocks5Server.xcframework/ios-arm64/Headers",
+					"$(PROJECT_DIR)/HevSocks5Server.xcframework/ios-arm64_x86_64-simulator/Headers",
+				);
 				INFOPLIST_FILE = SOCKS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 2.0;
@@ -311,6 +312,15 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 2LJ882GPY8;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)",
+				);
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/HevSocks5Server.xcframework/ios-arm64/Headers",
+					"$(PROJECT_DIR)/HevSocks5Server.xcframework/ios-arm64_x86_64-simulator/Headers",
+				);
 				INFOPLIST_FILE = SOCKS/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				MARKETING_VERSION = 2.0;
