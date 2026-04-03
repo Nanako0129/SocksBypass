@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <ifaddrs.h>
+#include <arpa/inet.h>
 #include <net/if.h>
 #include <net/if_dl.h>
 #include "hev-main.h"
@@ -60,6 +61,32 @@ static BOOL getInterfaceBytes(const char *ifname, uint64_t *rxBytes, uint64_t *t
     }
     freeifaddrs(addrs);
     return found;
+}
+
+static NSString *getInterfaceNameForIPv4Address(NSString *ipAddress) {
+    if (!ipAddress.length) return nil;
+
+    struct ifaddrs *addrs = NULL;
+    if (getifaddrs(&addrs) != 0) return nil;
+
+    NSString *foundInterface = nil;
+    for (struct ifaddrs *a = addrs; a != NULL; a = a->ifa_next) {
+        if (!a->ifa_addr || a->ifa_addr->sa_family != AF_INET) continue;
+        if (!(a->ifa_flags & IFF_UP) || !(a->ifa_flags & IFF_RUNNING)) continue;
+
+        char addrBuf[INET_ADDRSTRLEN] = {0};
+        const struct sockaddr_in *sin = (const struct sockaddr_in *)a->ifa_addr;
+        if (!inet_ntop(AF_INET, &sin->sin_addr, addrBuf, sizeof(addrBuf))) continue;
+
+        NSString *candidate = [NSString stringWithUTF8String:addrBuf];
+        if (![candidate isEqualToString:ipAddress]) continue;
+
+        foundInterface = [NSString stringWithUTF8String:a->ifa_name];
+        break;
+    }
+
+    freeifaddrs(addrs);
+    return foundInterface;
 }
 
 - (NSString *)formatBytes:(uint64_t)bytes {
@@ -326,17 +353,11 @@ static BOOL getInterfaceBytes(const char *ifname, uint64_t *rxBytes, uint64_t *t
             return;
         }
 
-        // Determine interface name used by AppDelegate (bridge100 = hotspot, en0 = WiFi)
-        __block NSString *ifName = @"en0";
-        struct ifaddrs *interfaces = NULL;
-        if (getifaddrs(&interfaces) == 0) {
-            for (struct ifaddrs *a = interfaces; a != NULL; a = a->ifa_next) {
-                if (a->ifa_addr && a->ifa_addr->sa_family == AF_INET) {
-                    NSString *name = [NSString stringWithUTF8String:a->ifa_name];
-                    if ([name isEqualToString:@"bridge100"]) { ifName = @"bridge100"; break; }
-                }
-            }
-            freeifaddrs(interfaces);
+        NSString *ifName = getInterfaceNameForIPv4Address(ipAddress);
+        if (!ifName.length) {
+            ifName = @"en0";
+            [self logMessage:[NSString stringWithFormat:
+                @"[SOCKS] Could not map IP %@ to interface, fallback to %@", ipAddress, ifName]];
         }
         activeInterface = ifName;
 
