@@ -345,8 +345,6 @@ static NSString *getInterfaceNameForIPv4Address(NSString *ipAddress) {
                     [self.statusLabel setText:@"Not Running - No Network Interface"];
                     [self.audioPlayer stop];
                     [[AVAudioSession sharedInstance] setActive:NO error:nil];
-                    [[UIApplication sharedApplication]
-                        performSelector:@selector(terminate:) withObject:nil afterDelay:0.0];
                 }]];
                 [self presentViewController:alert animated:YES completion:nil];
             });
