@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		44674CDE2F973C4F008A3994 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 44674CDD2F973C4F008A3994 /* AppIcon.icon */; };
 		7F1F2723212A29D600540E3A /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2722212A29D600540E3A /* AppDelegate.m */; };
 		7F1F2726212A29D600540E3A /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2725212A29D600540E3A /* ViewController.m */; };
 		7F1F2729212A29D600540E3A /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F2727212A29D600540E3A /* Main.storyboard */; };
@@ -17,6 +18,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		44674CDD2F973C4F008A3994 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		7F1F271E212A29D600540E3A /* SocksBypass.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SocksBypass.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		7F1F2721212A29D600540E3A /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
 		7F1F2722212A29D600540E3A /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
@@ -63,6 +65,7 @@
 			children = (
 				7FCF1EA2212B2C8C00B5D14D /* blank.wav */,
 				AE1B2C3D4E5F6A7B8C9D0E1F /* HevSocks5Server.xcframework */,
+				44674CDD2F973C4F008A3994 /* AppIcon.icon */,
 				7F1F2721212A29D600540E3A /* AppDelegate.h */,
 				7F1F2722212A29D600540E3A /* AppDelegate.m */,
 				7F1F2724212A29D600540E3A /* ViewController.h */,
@@ -134,6 +137,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7F1F272E212A29D600540E3A /* LaunchScreen.storyboard in Resources */,
+				44674CDE2F973C4F008A3994 /* AppIcon.icon in Resources */,
 				7FCF1EA3212B2C8C00B5D14D /* blank.wav in Resources */,
 				7F1F2729212A29D600540E3A /* Main.storyboard in Resources */,
 			);
