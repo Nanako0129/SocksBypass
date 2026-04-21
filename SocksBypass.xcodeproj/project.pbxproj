@@ -10,7 +10,6 @@
 		7F1F2723212A29D600540E3A /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2722212A29D600540E3A /* AppDelegate.m */; };
 		7F1F2726212A29D600540E3A /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2725212A29D600540E3A /* ViewController.m */; };
 		7F1F2729212A29D600540E3A /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F2727212A29D600540E3A /* Main.storyboard */; };
-		7F1F272B212A29D600540E3A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F272A212A29D600540E3A /* Assets.xcassets */; };
 		7F1F272E212A29D600540E3A /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F272C212A29D600540E3A /* LaunchScreen.storyboard */; };
 		7F1F2731212A29D600540E3A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2730212A29D600540E3A /* main.m */; };
 		7FCF1EA3212B2C8C00B5D14D /* blank.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7FCF1EA2212B2C8C00B5D14D /* blank.wav */; };
@@ -24,7 +23,6 @@
 		7F1F2724212A29D600540E3A /* ViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ViewController.h; sourceTree = "<group>"; };
 		7F1F2725212A29D600540E3A /* ViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ViewController.m; sourceTree = "<group>"; };
 		7F1F2728212A29D600540E3A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
-		7F1F272A212A29D600540E3A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7F1F272D212A29D600540E3A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		7F1F272F212A29D600540E3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		7F1F2730212A29D600540E3A /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
@@ -70,7 +68,6 @@
 				7F1F2724212A29D600540E3A /* ViewController.h */,
 				7F1F2725212A29D600540E3A /* ViewController.m */,
 				7F1F2727212A29D600540E3A /* Main.storyboard */,
-				7F1F272A212A29D600540E3A /* Assets.xcassets */,
 				7F1F272C212A29D600540E3A /* LaunchScreen.storyboard */,
 				7F1F272F212A29D600540E3A /* Info.plist */,
 				7F1F2730212A29D600540E3A /* main.m */,
@@ -138,7 +135,6 @@
 			files = (
 				7F1F272E212A29D600540E3A /* LaunchScreen.storyboard in Resources */,
 				7FCF1EA3212B2C8C00B5D14D /* blank.wav in Resources */,
-				7F1F272B212A29D600540E3A /* Assets.xcassets in Resources */,
 				7F1F2729212A29D600540E3A /* Main.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
