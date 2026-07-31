@@ -15,3 +15,11 @@ DerivedData/
 *.dSYM.zip
 *.dSYM
 
+# Reproducible third-party source/build output
+Vendor/
+
+
+# Agent worktrees and local session state
+.claude/
+__pycache__/
+*.pyc
