@@ -30,6 +30,9 @@
 		AA0000010000000000000015 /* TrafficCounters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000004 /* TrafficCounters.swift */; };
 		AA0000010000000000000016 /* NetworkTCPRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000003 /* NetworkTCPRelay.swift */; };
 		AA0000010000000000000017 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB000001000000000000000B /* XCTest.framework */; };
+		AA0000010000000000000023 /* UdpAssociation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000022 /* UdpAssociation.swift */; };
+		AA0000010000000000000024 /* UdpAssociationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000023 /* UdpAssociationTests.swift */; };
+		AA0000010000000000000025 /* UdpAssociation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000022 /* UdpAssociation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -57,6 +60,8 @@
 		AB0000010000000000000009 /* NetworkTCPRelayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkTCPRelayTests.swift; sourceTree = "<group>"; };
 		AB0000010000000000000020 /* ProcessUsage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessUsage.swift; sourceTree = "<group>"; };
 		AB0000010000000000000021 /* ProcessUsageTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessUsageTests.swift; sourceTree = "<group>"; };
+		AB0000010000000000000022 /* UdpAssociation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UdpAssociation.swift; sourceTree = "<group>"; };
+		AB0000010000000000000023 /* UdpAssociationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UdpAssociationTests.swift; sourceTree = "<group>"; };
 		AB000001000000000000000A /* HevSocks5Server.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = HevSocks5Server.xcframework; sourceTree = "<group>"; };
 		AB000001000000000000000B /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
@@ -127,6 +132,7 @@
 				AB0000010000000000000002 /* Socks5HandshakeParser.swift */,
 				AB0000010000000000000003 /* NetworkTCPRelay.swift */,
 				AB0000010000000000000004 /* TrafficCounters.swift */,
+				AB0000010000000000000022 /* UdpAssociation.swift */,
 				AB0000010000000000000020 /* ProcessUsage.swift */,
 				AB0000010000000000000005 /* HevBridge.h */,
 			);
@@ -139,6 +145,7 @@
 				AB0000010000000000000007 /* Socks5HandshakeParserTests.swift */,
 				AB0000010000000000000008 /* TrafficCountersTests.swift */,
 				AB0000010000000000000009 /* NetworkTCPRelayTests.swift */,
+				AB0000010000000000000023 /* UdpAssociationTests.swift */,
 				AB0000010000000000000021 /* ProcessUsageTests.swift */,
 			);
 			path = SocksBypassTests;
@@ -272,6 +279,7 @@
 				AA0000010000000000000002 /* Socks5HandshakeParser.swift in Sources */,
 				AA0000010000000000000003 /* NetworkTCPRelay.swift in Sources */,
 				AA0000010000000000000004 /* TrafficCounters.swift in Sources */,
+				AA0000010000000000000023 /* UdpAssociation.swift in Sources */,
 				AA0000010000000000000020 /* ProcessUsage.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -288,6 +296,8 @@
 				AA0000010000000000000021 /* ProcessUsage.swift in Sources */,
 				AA0000010000000000000022 /* ProcessUsageTests.swift in Sources */,
 				AA0000010000000000000016 /* NetworkTCPRelay.swift in Sources */,
+				AA0000010000000000000025 /* UdpAssociation.swift in Sources */,
+				AA0000010000000000000024 /* UdpAssociationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

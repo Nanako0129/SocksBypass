@@ -8,14 +8,22 @@ struct Socks5HandshakeParser {
         let port: UInt16
     }
 
-    struct ConnectRequest: Equatable {
+    enum Command: Equatable {
+        case connect
+        case udpAssociate
+    }
+
+    struct Request: Equatable {
+        let command: Command
+        /// For CONNECT the destination. For UDP ASSOCIATE the address the client
+        /// expects to send datagrams from, which is conventionally 0.0.0.0:0.
         let target: Target
         let firstPayload: Data
     }
 
     struct Output: Equatable {
         var replies: [Data] = []
-        var connect: ConnectRequest?
+        var request: Request?
         var shouldClose = false
     }
 
@@ -37,6 +45,7 @@ struct Socks5HandshakeParser {
     }
 
     private var phase = Phase.greetingHeader
+    private var pendingCommand = Command.connect
     private var buffer = Data()
 
     var isActive: Bool {
@@ -62,7 +71,7 @@ struct Socks5HandshakeParser {
         var output = Output()
         var offset = 0
 
-        while offset < data.count, !output.shouldClose, output.connect == nil {
+        while offset < data.count, !output.shouldClose, output.request == nil {
             switch phase {
             case .greetingHeader:
                 guard appendNeeded(2, from: data, offset: &offset) else { break }
@@ -100,16 +109,18 @@ struct Socks5HandshakeParser {
                     reply = 0x01
                 } else if bytes[2] != 0x00 {
                     reply = 0x01
-                } else if bytes[1] != 0x01 {
+                } else if bytes[1] != 0x01, bytes[1] != 0x03 {
                     reply = 0x07
                 } else {
                     reply = nil
                 }
+                let command: Command = bytes[1] == 0x03 ? .udpAssociate : .connect
 
                 if let reply {
                     output.replies.append(Self.requestReply(reply))
                     close(&output)
                 } else {
+                    pendingCommand = command
                     switch bytes[3] {
                     case 0x01:
                         phase = .requestAddress(.ipv4, 6)
@@ -146,7 +157,8 @@ struct Socks5HandshakeParser {
                 let payload = Data(data[payloadStart..<data.endIndex])
                 offset = data.count
                 phase = .active
-                output.connect = ConnectRequest(
+                output.request = Request(
+                    command: pendingCommand,
                     target: Target(address: address, port: port),
                     firstPayload: payload
                 )

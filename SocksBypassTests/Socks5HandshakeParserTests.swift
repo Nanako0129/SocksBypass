@@ -21,7 +21,7 @@ final class Socks5HandshakeParserTests: XCTestCase {
             _ = parser.feed(greeting)
             let first = parser.feed(Data(request.prefix(split)))
             let second = parser.feed(Data(request.dropFirst(split)))
-            let connect = first.connect ?? second.connect
+            let connect = first.request ?? second.request
             XCTAssertEqual(connect?.target, .init(address: "127.0.0.1", port: 8080), "split \(split)")
             XCTAssertEqual(connect?.firstPayload, Data(), "split \(split)")
         }
@@ -30,12 +30,12 @@ final class Socks5HandshakeParserTests: XCTestCase {
     func testGreetingAndRequestOneByteAtATime() {
         var parser = Socks5HandshakeParser()
         var replies: [Data] = []
-        var connect: Socks5HandshakeParser.ConnectRequest?
+        var connect: Socks5HandshakeParser.Request?
 
         for byte in greeting + request {
             let output = parser.feed(Data([byte]))
             replies.append(contentsOf: output.replies)
-            connect = output.connect ?? connect
+            connect = output.request ?? connect
         }
 
         XCTAssertEqual(replies, [Data([0x05, 0x00])])
@@ -49,16 +49,16 @@ final class Socks5HandshakeParserTests: XCTestCase {
         let output = parser.feed(greeting + request + payload)
 
         XCTAssertEqual(output.replies, [Data([0x05, 0x00])])
-        XCTAssertEqual(output.connect?.target, .init(address: "127.0.0.1", port: 8080))
-        XCTAssertEqual(output.connect?.firstPayload, payload)
+        XCTAssertEqual(output.request?.target, .init(address: "127.0.0.1", port: 8080))
+        XCTAssertEqual(output.request?.firstPayload, payload)
     }
 
     func testValidRequestWaitsForAllTenBytes() {
         var parser = Socks5HandshakeParser()
         _ = parser.feed(greeting)
-        XCTAssertNil(parser.feed(Data(request.prefix(9))).connect)
+        XCTAssertNil(parser.feed(Data(request.prefix(9))).request)
         XCTAssertEqual(parser.bufferedByteCount, 5)
-        XCTAssertNotNil(parser.feed(Data(request.suffix(1))).connect)
+        XCTAssertNotNil(parser.feed(Data(request.suffix(1))).request)
     }
 
     func testInvalidGreetingVersionRepliesAndCloses() {
@@ -129,7 +129,7 @@ final class Socks5HandshakeParserTests: XCTestCase {
                 _ = parser.feed(greeting)
                 let first = parser.feed(Data(bytes.prefix(split)))
                 let second = parser.feed(Data(bytes.dropFirst(split)))
-                let connect = first.connect ?? second.connect
+                let connect = first.request ?? second.request
                 XCTAssertEqual(connect?.target, .init(address: address, port: 443),
                                "\(name) split \(split)")
             }

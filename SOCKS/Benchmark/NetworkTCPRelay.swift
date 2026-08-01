@@ -201,6 +201,8 @@ private enum CleanupReason: String {
     case clientUnknownState
     case handshakeReceiveError
     case handshakeClientEOF
+    case udpControlClosed
+    case udpSocketFailed
     case targetFailedActive
     case targetCancelledInactive
     case targetUnknownState
@@ -228,6 +230,7 @@ private final class RelaySession {
     private let didClose: (UUID) -> Void
     private var parser = Socks5HandshakeParser()
     private var target: NWConnection?
+    private var udpAssociation: UdpAssociation?
     private var pendingInitialPayload = Data()
     private var pendingClientReadComplete = false
     private var clientReady = false
@@ -294,14 +297,18 @@ private final class RelaySession {
             clientReady = true
             receiveHandshake()
         case .failed:
-            if active, !clientReadComplete, target != nil {
+            if udpAssociation != nil {
+                cleanup(.udpControlClosed)
+            } else if active, !clientReadComplete, target != nil {
                 armCloseTimeout()
                 receiveClientPayload()
             } else {
                 cleanup(.clientFailed)
             }
         case .cancelled:
-            if !active {
+            if udpAssociation != nil {
+                cleanup(.udpControlClosed)
+            } else if !active {
                 cleanup(.clientCancelledInactive)
             }
         case .setup, .preparing, .waiting:
@@ -330,16 +337,21 @@ private final class RelaySession {
 
             let output = self.parser.feed(data ?? Data())
             self.pendingClientReadComplete = self.pendingClientReadComplete || isComplete || error != nil
-            let closeAfterResponses = output.shouldClose || (self.pendingClientReadComplete && output.connect == nil)
+            let closeAfterResponses = output.shouldClose || (self.pendingClientReadComplete && output.request == nil)
 
             self.sendControlResponses(output.replies, final: closeAfterResponses) { success in
                 guard success, !self.cleaned else { return }
 
                 if output.shouldClose {
                     self.finishAfterGracefulControlClose()
-                } else if let request = output.connect {
-                    self.pendingInitialPayload = request.firstPayload
-                    self.beginTargetConnection(request)
+                } else if let request = output.request {
+                    switch request.command {
+                    case .connect:
+                        self.pendingInitialPayload = request.firstPayload
+                        self.beginTargetConnection(request)
+                    case .udpAssociate:
+                        self.beginUdpAssociation(request)
+                    }
                 } else if self.pendingClientReadComplete {
                     _ = self.parser.finish()
                     self.cleanup(.handshakeClientEOF)
@@ -350,7 +362,73 @@ private final class RelaySession {
         }
     }
 
-    private func beginTargetConnection(_ request: Socks5HandshakeParser.ConnectRequest) {
+    private func beginUdpAssociation(_: Socks5HandshakeParser.Request) {
+        assertQueue()
+        handshakeTimeout?.cancel()
+        handshakeTimeout = nil
+        guard !cleaned, target == nil, udpAssociation == nil,
+              let localAddress = controlLocalAddress() else {
+            sendConnectFailure(0x01)
+            return
+        }
+
+        do {
+            let association = try UdpAssociation(
+                queue: queue,
+                counters: counters,
+                localAddress: localAddress,
+                onFailure: { [weak self] in
+                    guard let self else { return }
+                    self.assertQueue()
+                    self.cleanup(.udpSocketFailed)
+                }
+            )
+            guard let reply = association.replyData(localAddress: localAddress) else {
+                association.cancel()
+                sendConnectFailure(0x01)
+                return
+            }
+            udpAssociation = association
+            // activeTCP intentionally remains unchanged: this metric counts
+            // TCP CONNECT flows, not UDP control associations.
+            sendControlResponses([reply], final: false) { success in
+                guard success, !self.cleaned else { return }
+                self.receiveUdpControl()
+            }
+        } catch {
+            sendConnectFailure(0x01)
+        }
+    }
+
+    private func receiveUdpControl() {
+        assertQueue()
+        guard !cleaned, udpAssociation != nil, !handshakeReceivePending else { return }
+        handshakeReceivePending = true
+        client.receive(minimumIncompleteLength: 1, maximumLength: Socks5HandshakeParser.maximumFeedBytes) {
+            [weak self] data, _, isComplete, error in
+            guard let self else { return }
+            self.assertQueue()
+            self.handshakeReceivePending = false
+            guard !self.cleaned else { return }
+            if isComplete || error != nil {
+                self.cleanup(.udpControlClosed)
+            } else {
+                self.receiveUdpControl()
+            }
+            _ = data
+        }
+    }
+
+    private func controlLocalAddress() -> String? {
+        assertQueue()
+        guard let endpoint = client.currentPath?.localEndpoint,
+              case let .hostPort(host, _) = endpoint else {
+            return nil
+        }
+        return String(describing: host).trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    }
+
+    private func beginTargetConnection(_ request: Socks5HandshakeParser.Request) {
         assertQueue()
         handshakeTimeout?.cancel()
         handshakeTimeout = nil
@@ -676,6 +754,8 @@ private final class RelaySession {
         target?.stateUpdateHandler = nil
         client.cancel()
         target?.cancel()
+        udpAssociation?.cancel()
+        udpAssociation = nil
         if active {
             active = false
             counters.sessionClosed(id)
