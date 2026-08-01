@@ -19,11 +19,19 @@ struct Socks5HandshakeParser {
         var shouldClose = false
     }
 
+    private enum AddressKind {
+        case ipv4
+        case ipv6
+        case domain
+    }
+
     private enum Phase {
         case greetingHeader
         case greetingMethods(Int)
         case requestHeader
-        case requestIPv4Body
+        case requestDomainLength
+        /// Address kind plus the byte count still to read: address bytes and the port.
+        case requestAddress(AddressKind, Int)
         case active
         case closed
     }
@@ -94,8 +102,6 @@ struct Socks5HandshakeParser {
                     reply = 0x01
                 } else if bytes[1] != 0x01 {
                     reply = 0x07
-                } else if bytes[3] != 0x01 {
-                    reply = 0x08
                 } else {
                     reply = nil
                 }
@@ -104,16 +110,38 @@ struct Socks5HandshakeParser {
                     output.replies.append(Self.requestReply(reply))
                     close(&output)
                 } else {
-                    phase = .requestIPv4Body
+                    switch bytes[3] {
+                    case 0x01:
+                        phase = .requestAddress(.ipv4, 6)
+                    case 0x04:
+                        phase = .requestAddress(.ipv6, 18)
+                    case 0x03:
+                        phase = .requestDomainLength
+                    default:
+                        output.replies.append(Self.requestReply(0x08))
+                        close(&output)
+                    }
                 }
 
-            case .requestIPv4Body:
-                guard appendNeeded(6, from: data, offset: &offset) else { break }
+            case .requestDomainLength:
+                guard appendNeeded(1, from: data, offset: &offset) else { break }
+                let length = Int(buffer[buffer.startIndex])
+                buffer.removeAll(keepingCapacity: true)
+
+                guard length > 0 else {
+                    output.replies.append(Self.requestReply(0x01))
+                    close(&output)
+                    continue
+                }
+                phase = .requestAddress(.domain, length + 2)
+
+            case .requestAddress(let kind, let required):
+                guard appendNeeded(required, from: data, offset: &offset) else { break }
                 let bytes = [UInt8](buffer)
                 buffer.removeAll(keepingCapacity: true)
 
-                let address = "\(bytes[0]).\(bytes[1]).\(bytes[2]).\(bytes[3])"
-                let port = UInt16(bytes[4]) << 8 | UInt16(bytes[5])
+                let address = Self.address(kind, from: bytes.dropLast(2))
+                let port = UInt16(bytes[required - 2]) << 8 | UInt16(bytes[required - 1])
                 let payloadStart = data.index(data.startIndex, offsetBy: offset)
                 let payload = Data(data[payloadStart..<data.endIndex])
                 offset = data.count
@@ -145,6 +173,20 @@ struct Socks5HandshakeParser {
         Data([0x05, reply, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
     }
 
+    private static func address(_ kind: AddressKind, from bytes: ArraySlice<UInt8>) -> String {
+        switch kind {
+        case .ipv4:
+            return bytes.map(String.init).joined(separator: ".")
+        case .ipv6:
+            // Uncompressed form; NWEndpoint.Host parses it and callers never display it.
+            return stride(from: bytes.startIndex, to: bytes.endIndex, by: 2)
+                .map { String(format: "%02x%02x", bytes[$0], bytes[$0 + 1]) }
+                .joined(separator: ":")
+        case .domain:
+            return String(decoding: bytes, as: UTF8.self)
+        }
+    }
+
     private mutating func appendNeeded(_ requiredCount: Int, from data: Data, offset: inout Int) -> Bool {
         let needed = requiredCount - buffer.count
         guard needed > 0 else { return true }
@@ -171,7 +213,7 @@ struct Socks5HandshakeParser {
         switch phase {
         case .greetingHeader, .greetingMethods:
             output.replies.append(Data([0x05, 0xFF]))
-        case .requestHeader, .requestIPv4Body:
+        case .requestHeader, .requestDomainLength, .requestAddress:
             output.replies.append(Self.requestReply(0x01))
         case .active, .closed:
             break

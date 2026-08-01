@@ -109,7 +109,39 @@ final class Socks5HandshakeParserTests: XCTestCase {
         assertInvalidRequest(header: [0x04, 0x01, 0x00, 0x01], reply: 0x01)
         assertInvalidRequest(header: [0x05, 0x01, 0x01, 0x01], reply: 0x01)
         assertInvalidRequest(header: [0x05, 0x02, 0x00, 0x01], reply: 0x07)
-        assertInvalidRequest(header: [0x05, 0x01, 0x00, 0x03], reply: 0x08)
+        assertInvalidRequest(header: [0x05, 0x01, 0x00, 0x02], reply: 0x08)
+    }
+
+    func testDomainAndIPv6RequestsAtEverySplitPoint() {
+        let cases: [(name: String, request: [UInt8], address: String)] = [
+            ("domain",
+             [0x05, 0x01, 0x00, 0x03, 11] + Array("example.com".utf8) + [0x01, 0xBB],
+             "example.com"),
+            ("ipv6",
+             [0x05, 0x01, 0x00, 0x04,
+              0x20, 0x01, 0x0D, 0xB8, 0x00, 0x00, 0x00, 0x00,
+              0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0xBB],
+             "2001:0db8:0000:0000:0000:0000:0000:0001"),
+        ]
+        for (name, bytes, address) in cases {
+            for split in 0...bytes.count {
+                var parser = Socks5HandshakeParser()
+                _ = parser.feed(greeting)
+                let first = parser.feed(Data(bytes.prefix(split)))
+                let second = parser.feed(Data(bytes.dropFirst(split)))
+                let connect = first.connect ?? second.connect
+                XCTAssertEqual(connect?.target, .init(address: address, port: 443),
+                               "\(name) split \(split)")
+            }
+        }
+    }
+
+    func testZeroLengthDomainIsRejected() {
+        var parser = Socks5HandshakeParser()
+        _ = parser.feed(greeting)
+        let output = parser.feed(Data([0x05, 0x01, 0x00, 0x03, 0x00]))
+        XCTAssertEqual(output.replies, [Socks5HandshakeParser.requestReply(0x01)])
+        XCTAssertTrue(parser.isClosed)
     }
 
     func testOversizedHandshakeFeedFailsClosed() {
