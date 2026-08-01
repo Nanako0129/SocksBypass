@@ -390,6 +390,7 @@ private final class RelaySession {
                 return
             }
             udpAssociation = association
+            counters.associationOpened(id)
             // activeTCP intentionally remains unchanged: this metric counts
             // TCP CONNECT flows, not UDP control associations.
             sendControlResponses([reply], final: false) { success in
@@ -763,8 +764,11 @@ private final class RelaySession {
         target?.stateUpdateHandler = nil
         client.cancel()
         target?.cancel()
-        udpAssociation?.cancel()
-        udpAssociation = nil
+        if udpAssociation != nil {
+            udpAssociation?.cancel()
+            udpAssociation = nil
+            counters.associationClosed(id)
+        }
         if active {
             active = false
             counters.sessionClosed(id)

@@ -17,6 +17,9 @@
 		7F4FA085212A2AD000F14A55 /* sblist.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA081212A2AD000F14A55 /* sblist.c */; };
 		7F4FA086212A2AD000F14A55 /* sockssrv.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA082212A2AD000F14A55 /* sockssrv.c */; };
 		AA0000010000000000000001 /* BenchmarkRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000001 /* BenchmarkRunner.swift */; };
+		AA0000010000000000000030 /* SocksBypassApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000030 /* SocksBypassApp.swift */; };
+		AA0000010000000000000031 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000031 /* ContentView.swift */; };
+		AA0000010000000000000032 /* RelayViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000032 /* RelayViewModel.swift */; };
 		AA0000010000000000000002 /* Socks5HandshakeParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000002 /* Socks5HandshakeParser.swift */; };
 		AA0000010000000000000003 /* NetworkTCPRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000003 /* NetworkTCPRelay.swift */; };
 		AA0000010000000000000004 /* TrafficCounters.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000004 /* TrafficCounters.swift */; };
@@ -50,6 +53,9 @@
 		7F4FA081212A2AD000F14A55 /* sblist.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = sblist.c; path = microsocks/sblist.c; sourceTree = SOURCE_ROOT; };
 		7F4FA082212A2AD000F14A55 /* sockssrv.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = sockssrv.c; path = microsocks/sockssrv.c; sourceTree = SOURCE_ROOT; };
 		AB0000010000000000000001 /* BenchmarkRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkRunner.swift; sourceTree = "<group>"; };
+		AB0000010000000000000030 /* SocksBypassApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SocksBypassApp.swift; sourceTree = "<group>"; };
+		AB0000010000000000000031 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/ContentView.swift; sourceTree = "<group>"; };
+		AB0000010000000000000032 /* RelayViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/RelayViewModel.swift; sourceTree = "<group>"; };
 		AB0000010000000000000002 /* Socks5HandshakeParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Socks5HandshakeParser.swift; sourceTree = "<group>"; };
 		AB0000010000000000000003 /* NetworkTCPRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkTCPRelay.swift; sourceTree = "<group>"; };
 		AB0000010000000000000004 /* TrafficCounters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficCounters.swift; sourceTree = "<group>"; };
@@ -112,6 +118,9 @@
 				7F4FA080212A2AD000F14A55 /* server.c */,
 				7F4FA082212A2AD000F14A55 /* sockssrv.c */,
 				AC0000010000000000000001 /* Benchmark */,
+				AB0000010000000000000030 /* SocksBypassApp.swift */,
+				AB0000010000000000000031 /* ContentView.swift */,
+				AB0000010000000000000032 /* RelayViewModel.swift */,
 				7F1F2721212A29D600540E3A /* AppDelegate.h */,
 				7F1F2722212A29D600540E3A /* AppDelegate.m */,
 				7F1F2724212A29D600540E3A /* ViewController.h */,
@@ -269,13 +278,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7F1F2726212A29D600540E3A /* ViewController.m in Sources */,
-				7F1F2731212A29D600540E3A /* main.m in Sources */,
-				7F1F2723212A29D600540E3A /* AppDelegate.m in Sources */,
-				7F4FA086212A2AD000F14A55 /* sockssrv.c in Sources */,
-				7F4FA084212A2AD000F14A55 /* server.c in Sources */,
-				7F4FA085212A2AD000F14A55 /* sblist.c in Sources */,
 				AA0000010000000000000001 /* BenchmarkRunner.swift in Sources */,
+				AA0000010000000000000030 /* SocksBypassApp.swift in Sources */,
+				AA0000010000000000000031 /* ContentView.swift in Sources */,
+				AA0000010000000000000032 /* RelayViewModel.swift in Sources */,
 				AA0000010000000000000002 /* Socks5HandshakeParser.swift in Sources */,
 				AA0000010000000000000003 /* NetworkTCPRelay.swift in Sources */,
 				AA0000010000000000000004 /* TrafficCounters.swift in Sources */,

@@ -10,6 +10,9 @@ final class TrafficCounters {
         let uploadBytes: UInt64
         let downloadBytes: UInt64
         let activeTCP: Int
+        var activeUDP: Int = 0
+
+        var activeTotal: Int { activeTCP + activeUDP }
     }
 
     private let queue: DispatchQueue
@@ -17,6 +20,7 @@ final class TrafficCounters {
     private var uploadBytes: UInt64 = 0
     private var downloadBytes: UInt64 = 0
     private var activeSessions = Set<UUID>()
+    private var activeAssociations = Set<UUID>()
 
     init(queue: DispatchQueue, enabled: Bool) {
         self.queue = queue
@@ -35,9 +39,24 @@ final class TrafficCounters {
         activeSessions.remove(id)
     }
 
+    /// UDP associations are counted separately: an association is not a
+    /// connection, and `activeTCP` stays a CONNECT-only metric.
+    func associationOpened(_ id: UUID) {
+        assertQueue()
+        guard enabled else { return }
+        activeAssociations.insert(id)
+    }
+
+    func associationClosed(_ id: UUID) {
+        assertQueue()
+        guard enabled else { return }
+        activeAssociations.remove(id)
+    }
+
     func closeAllSessions() {
         assertQueue()
         activeSessions.removeAll(keepingCapacity: true)
+        activeAssociations.removeAll(keepingCapacity: true)
     }
 
     func recordCommitted(_ byteCount: Int, direction: Direction) {
@@ -58,7 +77,8 @@ final class TrafficCounters {
         return Snapshot(
             uploadBytes: uploadBytes,
             downloadBytes: downloadBytes,
-            activeTCP: activeSessions.count
+            activeTCP: activeSessions.count,
+            activeUDP: activeAssociations.count
         )
     }
 
