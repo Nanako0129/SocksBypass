@@ -247,6 +247,8 @@ private final class RelaySession {
     private var sessionUploadReceived = 0
     private var sessionDownloadReceived = 0
     private var downloadReceiveError = false
+    private var downloadReceiveErrorCode = "none"
+    private var downloadSawFIN = false
 #endif
 
     init(
@@ -292,12 +294,9 @@ private final class RelaySession {
             clientReady = true
             receiveHandshake()
         case .failed:
-            if active, !clientReadComplete, let target {
-                if clientReceivePending {
-                    armCloseTimeout()
-                } else {
-                    closeDirectionThenCleanup(to: target, flow: .upload)
-                }
+            if active, !clientReadComplete, target != nil {
+                armCloseTimeout()
+                receiveClientPayload()
             } else {
                 cleanup(.clientFailed)
             }
@@ -405,10 +404,13 @@ private final class RelaySession {
             if active {
                 if targetReadComplete {
                     cleanup(.targetFailedActive)
-                } else if targetReceivePending {
-                    armCloseTimeout()
                 } else {
-                    closeDirectionThenCleanup(to: client, flow: .download)
+                    // A failed state does not mean the stack has nothing left for us.
+                    // Backpressure leaves gaps with no receive outstanding, and giving
+                    // up in one of those gaps discards whatever is still buffered.
+                    // Keep draining; the receive path forwards and half-closes itself.
+                    armCloseTimeout()
+                    receiveTargetPayload()
                 }
             } else {
                 sendConnectFailure(Self.replyCode(for: error))
@@ -494,7 +496,7 @@ private final class RelaySession {
             guard !self.cleaned else { return }
 
             let payload = data ?? Data()
-            self.noteReceived(payload.count, .upload, error: error != nil)
+            self.noteReceived(payload.count, .upload, error: error, isComplete: isComplete)
             if !payload.isEmpty || isComplete {
                 self.forward(payload, flow: .upload, complete: isComplete || error != nil, terminalError: error != nil)
             } else if error != nil {
@@ -522,7 +524,7 @@ private final class RelaySession {
             guard !self.cleaned else { return }
 
             let payload = data ?? Data()
-            self.noteReceived(payload.count, .download, error: error != nil)
+            self.noteReceived(payload.count, .download, error: error, isComplete: isComplete)
             if !payload.isEmpty || isComplete {
                 self.forward(payload, flow: .download, complete: isComplete || error != nil, terminalError: error != nil)
             } else if error != nil {
@@ -699,13 +701,20 @@ private final class RelaySession {
 
     /// Bytes handed to us by the peer's receive callback, before we forward them.
     /// Comparing this against the committed count says which leg lost the bytes.
-    private func noteReceived(_ byteCount: Int, _ flow: Flow, error: Bool) {
+    private func noteReceived(_ byteCount: Int, _ flow: Flow, error: NWError?, isComplete: Bool) {
         switch flow {
         case .upload:
             sessionUploadReceived += byteCount
         case .download:
             sessionDownloadReceived += byteCount
-            if error { downloadReceiveError = true }
+            if isComplete { downloadSawFIN = true }
+            guard let error else { return }
+            downloadReceiveError = true
+            if case .posix(let code) = error {
+                downloadReceiveErrorCode = String(describing: code)
+            } else {
+                downloadReceiveErrorCode = "nonPosix"
+            }
         }
     }
 
@@ -717,6 +726,8 @@ private final class RelaySession {
             "uploadReceived": sessionUploadReceived,
             "downloadReceived": sessionDownloadReceived,
             "downloadReceiveError": downloadReceiveError,
+            "downloadReceiveErrorCode": downloadReceiveErrorCode,
+            "downloadSawFIN": downloadSawFIN,
             "clientReadComplete": clientReadComplete,
             "targetReadComplete": targetReadComplete,
             "active": active
@@ -727,7 +738,7 @@ private final class RelaySession {
     }
 #else
     private func note(_ byteCount: Int, _ direction: TrafficCounters.Direction) {}
-    private func noteReceived(_ byteCount: Int, _ flow: Flow, error: Bool) {}
+    private func noteReceived(_ byteCount: Int, _ flow: Flow, error: NWError?, isComplete: Bool) {}
     private func diagnose(_ reason: CleanupReason) {}
 #endif
 
