@@ -113,12 +113,15 @@ final class BenchmarkRunner: NSObject {
         }
         emit(status)
 
+        let usage = ProcessUsage.current()
         let json: [String: Any] = [
             "mode": mode.rawValue,
             "countersEnabled": countingEnabled,
             "uploadBytes": NSNumber(value: snapshot.uploadBytes),
             "downloadBytes": NSNumber(value: snapshot.downloadBytes),
-            "activeTCP": snapshot.activeTCP
+            "activeTCP": snapshot.activeTCP,
+            "cpuSeconds": usage.cpuSeconds,
+            "peakRSSBytes": NSNumber(value: usage.peakRSSBytes)
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys]) else { return }
         FileHandle.standardOutput.write(data)
