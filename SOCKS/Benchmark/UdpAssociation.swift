@@ -163,6 +163,15 @@ final class UdpAssociation {
             guard family == other.family else { return false }
             return bytes == other.bytes
         }
+
+        /// Compares the address without the port. Every address here is AF_INET6,
+        /// so the 16 address bytes live at offset 8.
+        func matchesHost(_ other: SocketAddress) -> Bool {
+            guard family == other.family, bytes.count >= 24, other.bytes.count >= 24 else {
+                return false
+            }
+            return bytes[8..<24] == other.bytes[8..<24]
+        }
     }
 
     private enum Resolution {
@@ -179,17 +188,20 @@ final class UdpAssociation {
     private var source: DispatchSourceRead?
     private var closed = false
     private var clientAddress: SocketAddress?
+    private let controlPeer: SocketAddress?
     private var resolutions: [String: Resolution] = [:]
 
     init(
         queue: DispatchQueue,
         counters: TrafficCounters,
         localAddress: String,
+        controlPeerAddress: String?,
         onFailure: @escaping () -> Void
     ) throws {
         self.queue = queue
         self.counters = counters
         self.onFailure = onFailure
+        controlPeer = controlPeerAddress.flatMap { Self.numericAddress($0, port: 0) }
         resolutionQueue = DispatchQueue(
             label: "com.nanako.socksbypass.benchmark.udp-dns",
             qos: .utility
@@ -313,6 +325,14 @@ final class UdpAssociation {
                 handlePeerDatagram(packet, from: sourceAddress)
             }
         } else {
+            // Only the TCP control connection's peer may claim the association, and
+            // only with a well-formed envelope. Latching the first arbitrary sender
+            // let any host that guessed the ephemeral port take over the association
+            // and receive the real client's payload as if it were peer traffic.
+            guard let controlPeer, sourceAddress.matchesHost(controlPeer),
+                  DatagramHeader.decode(packet) != nil else {
+                return
+            }
             clientAddress = sourceAddress
             handleClientDatagram(packet)
         }
@@ -526,11 +546,19 @@ final class UdpAssociation {
                (info.ai_family == AF_INET || info.ai_family == AF_INET6) {
                 let length = min(Int(info.ai_addrlen), MemoryLayout<sockaddr_storage>.size)
                 let bytes = Data(bytes: rawAddress, count: length)
-                let address = SocketAddress(
+                var address = SocketAddress(
                     bytes: bytes,
                     length: socklen_t(length),
                     family: sa_family_t(info.ai_family)
                 )
+                // sendto on the dual-stack AF_INET6 socket rejects an AF_INET
+                // sockaddr with EAFNOSUPPORT, so an A-only name would resolve
+                // successfully and then silently drop every datagram.
+                if info.ai_family == AF_INET,
+                   let (_, dotted) = headerAddress(address),
+                   let mapped = numericAddress(dotted, port: 0) {
+                    address = mapped
+                }
                 if !addresses.contains(where: { $0.bytes == address.bytes }) {
                     addresses.append(address)
                 }

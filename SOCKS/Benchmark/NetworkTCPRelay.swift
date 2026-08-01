@@ -377,6 +377,7 @@ private final class RelaySession {
                 queue: queue,
                 counters: counters,
                 localAddress: localAddress,
+                controlPeerAddress: controlRemoteAddress(),
                 onFailure: { [weak self] in
                     guard let self else { return }
                     self.assertQueue()
@@ -417,6 +418,14 @@ private final class RelaySession {
             }
             _ = data
         }
+    }
+
+    private func controlRemoteAddress() -> String? {
+        assertQueue()
+        guard case let .hostPort(host, _) = client.endpoint else { return nil }
+        return String(describing: host)
+            .components(separatedBy: "%").first
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) }
     }
 
     private func controlLocalAddress() -> String? {

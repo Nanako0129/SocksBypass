@@ -44,6 +44,7 @@ final class UdpAssociationTests: XCTestCase {
                 queue: queue,
                 counters: counters,
                 localAddress: "127.0.0.1",
+                controlPeerAddress: "127.0.0.1",
                 onFailure: {}
             )
         }
@@ -91,6 +92,7 @@ final class UdpAssociationTests: XCTestCase {
                 queue: queue,
                 counters: counters,
                 localAddress: "127.0.0.1",
+                controlPeerAddress: "127.0.0.1",
                 onFailure: { failureCount += 1 }
             )
         }
@@ -129,6 +131,73 @@ final class UdpAssociationTests: XCTestCase {
         XCTAssertNil(secondClient.receive(timeout: 0.2))
     }
 
+    /// Review finding: any host that guessed the ephemeral port could latch the
+    /// association and then receive the real client's payload as peer traffic.
+    func testOnlyControlPeerCanClaimTheAssociation() throws {
+        let queue = DispatchQueue(label: "UdpAssociationTests.hijack")
+        let counters = TrafficCounters(queue: queue, enabled: true)
+        let peer = try UdpTestSocket(family: AF_INET)
+        let association = try queue.sync {
+            try UdpAssociation(
+                queue: queue,
+                counters: counters,
+                localAddress: "127.0.0.1",
+                controlPeerAddress: "203.0.113.7",
+                onFailure: {}
+            )
+        }
+        defer { queue.sync { association.cancel() } }
+
+        let stranger = try UdpTestSocket(family: AF_INET)
+        let packet = try XCTUnwrap(
+            UdpAssociation.DatagramHeader.encode(
+                addressType: .ipv4, address: "127.0.0.1", port: peer.port, payload: Data([9, 9])
+            )
+        )
+        XCTAssertTrue(stranger.send(packet, host: "127.0.0.1", port: association.localPort))
+        XCTAssertNil(peer.receiveAndEcho(), "a non-control-peer source must not claim the association")
+        XCTAssertNil(stranger.receive(), "and must receive nothing back")
+    }
+
+    /// Review finding: getaddrinfo AF_INET results were cached as sockaddr_in and
+    /// then rejected by the dual-stack socket, so A-only names silently dropped
+    /// every datagram. "127.0.0.1" as a domain resolves to IPv4 only.
+    func testIPv4OnlyDomainDestinationIsReachable() throws {
+        let queue = DispatchQueue(label: "UdpAssociationTests.ipv4Domain")
+        let counters = TrafficCounters(queue: queue, enabled: true)
+        let echo = try UdpTestSocket(family: AF_INET)
+        let association = try queue.sync {
+            try UdpAssociation(
+                queue: queue,
+                counters: counters,
+                localAddress: "127.0.0.1",
+                controlPeerAddress: "127.0.0.1",
+                onFailure: {}
+            )
+        }
+        defer { queue.sync { association.cancel() } }
+
+        let client = try UdpTestSocket(family: AF_INET)
+        let packet = try XCTUnwrap(
+            UdpAssociation.DatagramHeader.encode(
+                addressType: .domain, address: "127.0.0.1", port: echo.port, payload: Data([4, 5, 6])
+            )
+        )
+        // Every socket in this suite lives on 127.0.0.1, so a stray datagram from a
+        // neighbouring test can reach this echo. Wait for the payload this test sent
+        // rather than accepting whatever arrives first.
+        var delivered: Data?
+        for _ in 0..<10 where delivered != Data([4, 5, 6]) {
+            XCTAssertTrue(client.send(packet, host: "127.0.0.1", port: association.localPort))
+            if let received = echo.receiveAndEcho(), received == Data([4, 5, 6]) {
+                delivered = received
+            }
+        }
+        XCTAssertEqual(delivered, Data([4, 5, 6]), "A-only domain destination never received the payload")
+        let reply = try XCTUnwrap(client.receive())
+        XCTAssertEqual(UdpAssociation.DatagramHeader.decode(reply)?.payload, Data([4, 5, 6]))
+    }
+
     func testCancelClosesUdpPort() throws {
         let queue = DispatchQueue(label: "UdpAssociationTests.teardown")
         let counters = TrafficCounters(queue: queue, enabled: true)
@@ -137,6 +206,7 @@ final class UdpAssociationTests: XCTestCase {
                 queue: queue,
                 counters: counters,
                 localAddress: "127.0.0.1",
+                controlPeerAddress: "127.0.0.1",
                 onFailure: {}
             )
         }
