@@ -2,6 +2,17 @@ import Foundation
 import Network
 
 final class NetworkTCPRelay {
+    /// Redacted by construction: these cases carry no address, hostname, port of a
+    /// peer, or payload, so there is nothing to filter out before display.
+    enum Event: Equatable {
+        case sessionOpened
+        case sessionClosed
+        case connectEstablished
+        case connectRejected(reply: UInt8)
+        case udpAssociated
+        case udpAssociateFailed
+    }
+
     enum RelayError: Error, Equatable {
         case alreadyRunning
         case listenerSetup
@@ -26,6 +37,8 @@ final class NetworkTCPRelay {
     private var generation = 0
     private var startCompletion: ((Result<UInt16, RelayError>) -> Void)?
     private var stopCompletions: [() -> Void] = []
+    /// Invoked on the relay queue. Set before `start`.
+    var eventHandler: ((Event) -> Void)?
 
     init(
         countingEnabled: Bool,
@@ -126,10 +139,12 @@ final class NetworkTCPRelay {
             id: id,
             client: connection,
             queue: queue,
-            counters: counters
+            counters: counters,
+            emit: { [weak self] event in self?.eventHandler?(event) }
         ) { [weak self] closedID in
             self?.sessions.removeValue(forKey: closedID)
         }
+        eventHandler?(.sessionOpened)
         sessions[id] = session
         session.start()
     }
@@ -227,6 +242,7 @@ private final class RelaySession {
     private let client: NWConnection
     private let queue: DispatchQueue
     private let counters: TrafficCounters
+    private let emit: (NetworkTCPRelay.Event) -> Void
     private let didClose: (UUID) -> Void
     private var parser = Socks5HandshakeParser()
     private var target: NWConnection?
@@ -259,12 +275,14 @@ private final class RelaySession {
         client: NWConnection,
         queue: DispatchQueue,
         counters: TrafficCounters,
+        emit: @escaping (NetworkTCPRelay.Event) -> Void,
         didClose: @escaping (UUID) -> Void
     ) {
         self.id = id
         self.client = client
         self.queue = queue
         self.counters = counters
+        self.emit = emit
         self.didClose = didClose
     }
 
@@ -368,6 +386,7 @@ private final class RelaySession {
         handshakeTimeout = nil
         guard !cleaned, target == nil, udpAssociation == nil,
               let localAddress = controlLocalAddress() else {
+            emit(.udpAssociateFailed)
             sendConnectFailure(0x01)
             return
         }
@@ -391,6 +410,7 @@ private final class RelaySession {
             }
             udpAssociation = association
             counters.associationOpened(id)
+            emit(.udpAssociated)
             // activeTCP intentionally remains unchanged: this metric counts
             // TCP CONNECT flows, not UDP control associations.
             sendControlResponses([reply], final: false) { success in
@@ -457,6 +477,7 @@ private final class RelaySession {
         target.stateUpdateHandler = { [weak self] state in
             self?.handleTargetState(state)
         }
+        emit(.connectEstablished)
         target.start(queue: queue)
     }
 
@@ -509,7 +530,16 @@ private final class RelaySession {
                 cleanup(.targetCancelledInactive)
             }
 
-        case .setup, .preparing, .waiting:
+        case .waiting(let error):
+            // Network.framework parks a refused or unreachable outbound connection
+            // in .waiting and retries for as long as the path might become viable.
+            // A proxy client is owed an answer instead: without this the CONNECT
+            // never receives a reply and the session hangs indefinitely.
+            if !active {
+                sendConnectFailure(Self.replyCode(for: error))
+            }
+
+        case .setup, .preparing:
             break
 
         @unknown default:
@@ -520,6 +550,7 @@ private final class RelaySession {
     private func sendConnectFailure(_ reply: UInt8) {
         assertQueue()
         guard !cleaned else { return }
+        emit(.connectRejected(reply: reply))
         sendControlResponses([Socks5HandshakeParser.requestReply(reply)], final: true) { success in
             if success {
                 self.finishAfterGracefulControlClose()
@@ -773,6 +804,7 @@ private final class RelaySession {
             active = false
             counters.sessionClosed(id)
         }
+        emit(.sessionClosed)
         didClose(id)
     }
 

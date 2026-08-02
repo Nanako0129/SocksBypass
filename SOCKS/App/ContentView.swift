@@ -11,6 +11,7 @@ struct ContentView: View {
                 speed
                 totals
                 sessions
+                activity
             }
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -72,6 +73,23 @@ struct ContentView: View {
                 metric("TCP", String(model.activeTCP))
                 metric("UDP", String(model.activeUDP))
                 metric("ALL", String(model.activeTotal))
+            }
+        }
+    }
+
+    private var activity: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("ACTIVITY").font(.caption).foregroundStyle(.secondary)
+            if model.log.isEmpty {
+                Text("—").foregroundStyle(.secondary)
+            } else {
+                ForEach(model.log.reversed()) { entry in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(entry.at, format: .dateTime.hour().minute().second())
+                            .font(.caption2).foregroundStyle(.secondary)
+                        Text(entry.text).font(.caption)
+                    }
+                }
             }
         }
     }

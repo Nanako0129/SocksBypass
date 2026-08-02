@@ -22,6 +22,13 @@ final class RelayViewModel: ObservableObject {
     @Published private(set) var downloadBytesPerSecond: UInt64 = 0
     @Published private(set) var activeTCP = 0
     @Published private(set) var activeUDP = 0
+    @Published private(set) var log: [LogEntry] = []
+
+    struct LogEntry: Identifiable, Equatable {
+        let id = UUID()
+        let at: Date
+        let text: String
+    }
 
     var activeTotal: Int { activeTCP + activeUDP }
 
@@ -31,14 +38,20 @@ final class RelayViewModel: ObservableObject {
 
     func start() {
         guard timer == nil else { return }
+        relay.eventHandler = { [weak self] event in
+            Task { @MainActor in self?.append(Self.describe(event)) }
+        }
         relay.start { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
                 switch result {
                 case .success(let port):
                     self.status = .listening(address: Self.localAddress() ?? "0.0.0.0", port: port)
+                    self.append("listening on \(port)")
                 case .failure(let error):
-                    self.status = .failed(Self.describe(error))
+                    let reason = Self.describe(error)
+                    self.status = .failed(reason)
+                    self.append(reason)
                 }
             }
         }
@@ -48,6 +61,28 @@ final class RelayViewModel: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    /// Bounded ring: the shell keeps the most recent entries and nothing else, so
+    /// a long-running proxy cannot grow this without limit.
+    private static let logLimit = 50
+
+    private func append(_ text: String) {
+        log.append(LogEntry(at: Date(), text: text))
+        if log.count > Self.logLimit {
+            log.removeFirst(log.count - Self.logLimit)
+        }
+    }
+
+    private static func describe(_ event: NetworkTCPRelay.Event) -> String {
+        switch event {
+        case .sessionOpened: return "session opened"
+        case .sessionClosed: return "session closed"
+        case .connectEstablished: return "CONNECT established"
+        case .connectRejected(let reply): return String(format: "CONNECT rejected 0x%02x", reply)
+        case .udpAssociated: return "UDP ASSOCIATE established"
+        case .udpAssociateFailed: return "UDP ASSOCIATE failed"
+        }
     }
 
     private func sample() {

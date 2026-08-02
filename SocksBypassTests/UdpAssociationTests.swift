@@ -551,3 +551,20 @@ private final class UdpTestSocket {
         }
     }
 }
+
+extension UdpAssociationTests {
+    /// The behavioural fixture for this was worthless: `getaddrinfo("127.0.0.1")`
+    /// returns more than the A record, so the send loop's fallback masked the
+    /// defect and the test passed with and without the fix. Assert the invariant
+    /// the fix actually establishes instead.
+    func testResolverReturnsOnlyDualStackAddresses() {
+        let addresses = UdpAssociation.resolve("127.0.0.1")
+        XCTAssertFalse(addresses.isEmpty, "127.0.0.1 must resolve")
+        for address in addresses {
+            XCTAssertEqual(
+                address.family, sa_family_t(AF_INET6),
+                "an AF_INET sockaddr is rejected by the dual-stack socket with EAFNOSUPPORT"
+            )
+        }
+    }
+}

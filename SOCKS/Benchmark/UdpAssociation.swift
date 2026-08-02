@@ -141,7 +141,7 @@ final class UdpAssociation {
 
     let localPort: UInt16
 
-    private struct SocketAddress {
+    struct SocketAddress {
         let bytes: Data
         let length: socklen_t
         let family: sa_family_t
@@ -525,7 +525,10 @@ final class UdpAssociation {
         return reply
     }
 
-    private static func resolve(_ host: String) -> [SocketAddress] {
+    /// Internal rather than private so the family invariant can be asserted:
+    /// every result must be AF_INET6, since the association socket rejects an
+    /// AF_INET sockaddr with EAFNOSUPPORT.
+    static func resolve(_ host: String) -> [SocketAddress] {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
         hints.ai_socktype = SOCK_DGRAM
@@ -551,6 +554,9 @@ final class UdpAssociation {
                     length: socklen_t(length),
                     family: sa_family_t(info.ai_family)
                 )
+                // sendto on the dual-stack AF_INET6 socket rejects an AF_INET
+                // sockaddr with EAFNOSUPPORT, so an A-only name would resolve
+                // successfully and then silently drop every datagram.
                 // sendto on the dual-stack AF_INET6 socket rejects an AF_INET
                 // sockaddr with EAFNOSUPPORT, so an A-only name would resolve
                 // successfully and then silently drop every datagram.
