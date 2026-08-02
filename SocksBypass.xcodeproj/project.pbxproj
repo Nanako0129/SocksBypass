@@ -7,15 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		7F1F2723212A29D600540E3A /* AppDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2722212A29D600540E3A /* AppDelegate.m */; };
-		7F1F2726212A29D600540E3A /* ViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2725212A29D600540E3A /* ViewController.m */; };
-		7F1F2729212A29D600540E3A /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F2727212A29D600540E3A /* Main.storyboard */; };
 		7F1F272B212A29D600540E3A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F272A212A29D600540E3A /* Assets.xcassets */; };
 		7F1F272E212A29D600540E3A /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7F1F272C212A29D600540E3A /* LaunchScreen.storyboard */; };
-		7F1F2731212A29D600540E3A /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 7F1F2730212A29D600540E3A /* main.m */; };
-		7F4FA084212A2AD000F14A55 /* server.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA080212A2AD000F14A55 /* server.c */; };
-		7F4FA085212A2AD000F14A55 /* sblist.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA081212A2AD000F14A55 /* sblist.c */; };
-		7F4FA086212A2AD000F14A55 /* sockssrv.c in Sources */ = {isa = PBXBuildFile; fileRef = 7F4FA082212A2AD000F14A55 /* sockssrv.c */; };
 		AA0000010000000000000001 /* BenchmarkRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000001 /* BenchmarkRunner.swift */; };
 		AA0000010000000000000030 /* SocksBypassApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000030 /* SocksBypassApp.swift */; };
 		AA0000010000000000000031 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000031 /* ContentView.swift */; };
@@ -40,18 +33,9 @@
 
 /* Begin PBXFileReference section */
 		7F1F271E212A29D600540E3A /* SocksBypass.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SocksBypass.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		7F1F2721212A29D600540E3A /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
-		7F1F2722212A29D600540E3A /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
-		7F1F2724212A29D600540E3A /* ViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ViewController.h; sourceTree = "<group>"; };
-		7F1F2725212A29D600540E3A /* ViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = ViewController.m; sourceTree = "<group>"; };
-		7F1F2728212A29D600540E3A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		7F1F272A212A29D600540E3A /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		7F1F272D212A29D600540E3A /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		7F1F272F212A29D600540E3A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		7F1F2730212A29D600540E3A /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
-		7F4FA080212A2AD000F14A55 /* server.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = server.c; path = microsocks/server.c; sourceTree = SOURCE_ROOT; };
-		7F4FA081212A2AD000F14A55 /* sblist.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = sblist.c; path = microsocks/sblist.c; sourceTree = SOURCE_ROOT; };
-		7F4FA082212A2AD000F14A55 /* sockssrv.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = sockssrv.c; path = microsocks/sockssrv.c; sourceTree = SOURCE_ROOT; };
 		AB0000010000000000000001 /* BenchmarkRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchmarkRunner.swift; sourceTree = "<group>"; };
 		AB0000010000000000000030 /* SocksBypassApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/SocksBypassApp.swift; sourceTree = "<group>"; };
 		AB0000010000000000000031 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/ContentView.swift; sourceTree = "<group>"; };
@@ -114,22 +98,13 @@
 		7F1F2720212A29D600540E3A /* SOCKS */ = {
 			isa = PBXGroup;
 			children = (
-				7F4FA081212A2AD000F14A55 /* sblist.c */,
-				7F4FA080212A2AD000F14A55 /* server.c */,
-				7F4FA082212A2AD000F14A55 /* sockssrv.c */,
 				AC0000010000000000000001 /* Benchmark */,
 				AB0000010000000000000030 /* SocksBypassApp.swift */,
 				AB0000010000000000000031 /* ContentView.swift */,
 				AB0000010000000000000032 /* RelayViewModel.swift */,
-				7F1F2721212A29D600540E3A /* AppDelegate.h */,
-				7F1F2722212A29D600540E3A /* AppDelegate.m */,
-				7F1F2724212A29D600540E3A /* ViewController.h */,
-				7F1F2725212A29D600540E3A /* ViewController.m */,
-				7F1F2727212A29D600540E3A /* Main.storyboard */,
 				7F1F272A212A29D600540E3A /* Assets.xcassets */,
 				7F1F272C212A29D600540E3A /* LaunchScreen.storyboard */,
 				7F1F272F212A29D600540E3A /* Info.plist */,
-				7F1F2730212A29D600540E3A /* main.m */,
 			);
 			path = SOCKS;
 			sourceTree = "<group>";
@@ -260,7 +235,6 @@
 			files = (
 				7F1F272E212A29D600540E3A /* LaunchScreen.storyboard in Resources */,
 				7F1F272B212A29D600540E3A /* Assets.xcassets in Resources */,
-				7F1F2729212A29D600540E3A /* Main.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -310,14 +284,6 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXVariantGroup section */
-		7F1F2727212A29D600540E3A /* Main.storyboard */ = {
-			isa = PBXVariantGroup;
-			children = (
-				7F1F2728212A29D600540E3A /* Base */,
-			);
-			name = Main.storyboard;
-			sourceTree = "<group>";
-		};
 		7F1F272C212A29D600540E3A /* LaunchScreen.storyboard */ = {
 			isa = PBXVariantGroup;
 			children = (
@@ -496,9 +462,6 @@
 				DEVELOPMENT_TEAM = 2LJ882GPY8;
 				EXCLUDED_SOURCE_FILE_NAMES = (
 					BenchmarkRunner.swift,
-					NetworkTCPRelay.swift,
-					Socks5HandshakeParser.swift,
-					TrafficCounters.swift,
 				);
 				INFOPLIST_FILE = SOCKS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -523,9 +486,6 @@
 				DEVELOPMENT_TEAM = 2LJ882GPY8;
 				EXCLUDED_SOURCE_FILE_NAMES = (
 					BenchmarkRunner.swift,
-					NetworkTCPRelay.swift,
-					Socks5HandshakeParser.swift,
-					TrafficCounters.swift,
 				);
 				INFOPLIST_FILE = SOCKS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -548,11 +508,6 @@
 				CODE_SIGN_STYLE = Automatic;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 2LJ882GPY8;
-				EXCLUDED_SOURCE_FILE_NAMES = (
-					server.c,
-					sblist.c,
-					sockssrv.c,
-				);
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"$(inherited)",
 					"BENCHMARK=1",
@@ -574,9 +529,7 @@
 				PRODUCT_MODULE_NAME = SocksBypass;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) BENCHMARK";
-				SWIFT_INSTALL_OBJC_HEADER = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = SOCKS/Benchmark/HevBridge.h;
-				SWIFT_OBJC_INTERFACE_HEADER_NAME = "SocksBypass-Swift.h";
 				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

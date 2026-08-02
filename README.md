@@ -1,6 +1,6 @@
 # iOS SOCKS5 Server
 
-A fully functional iOS SOCKS5 proxy server application based on the microsocks project.
+A fully functional iOS SOCKS5 proxy server application.
 
 ## Key Features
 
@@ -8,17 +8,6 @@ A fully functional iOS SOCKS5 proxy server application based on the microsocks p
 - Real-time upload/download speed display
 - Cumulative traffic statistics
 - Human-readable data units (B/KB/MB/GB)
-
-### 2. Complete Logging System
-- Real-time connection status monitoring
-- Colored log display (success/warning/error)
-- Auto-scroll to latest logs
-- Maximum 1000 lines of log history
-
-### 3. Background Operation
-- Supports iOS background mode
-- Uses silent audio to keep app running in background
-- Does not interfere with other apps' audio playback
 
 ## Screenshot
 <p align="center">
@@ -34,7 +23,7 @@ git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
 ```
 
 2. Open Xcode project:
-- Open `SOCKS.xcodeproj`
+- Open `SocksBypass.xcodeproj`
 - Select your developer account for signing
 - Modify Bundle Identifier to your own
 
@@ -57,7 +46,6 @@ p.s. if you want to use USB connection instead of WiFi you can use [danielpaulus
 ## Notes
 
 - This app requires devices to be on the same WiFi network, personal hotspot or USB connection
-- Due to iOS limitations, app must remain active in foreground or background
 - Not recommended for App Store distribution due to potential policy violations
 
 ## License
@@ -74,7 +62,7 @@ Based on [rofl0r/microsocks](https://github.com/rofl0r/microsocks)
 
 # iOS SOCKS5 Server
 
-一個功能完整的 iOS SOCKS5 代理伺服器應用程式，基於 microsocks 專案開發。
+一個功能完整的 iOS SOCKS5 代理伺服器應用程式。
 
 ## 主要功能
 
@@ -82,17 +70,6 @@ Based on [rofl0r/microsocks](https://github.com/rofl0r/microsocks)
 - 即時上傳/下載速度顯示
 - 累計流量統計
 - 人性化的資料單位顯示(B/KB/MB/GB)
-
-### 2. 完整日誌系統
-- 即時連線狀態監控
-- 彩色化的日誌顯示(成功/警告/錯誤)
-- 自動捲動至最新日誌
-- 最多保留1000行日誌記錄
-
-### 3. 背景運作
-- 支援 iOS 背景模式
-- 使用無聲音訊保持應用程式在背景運作
-- 不影響其他應用程式的音訊播放
 
 ## 截圖
 <p align="center">
@@ -107,7 +84,7 @@ git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
 ```
 
 2. 開啟 Xcode 專案:
-- 打開 `SOCKS.xcodeproj`
+- 打開 `SocksBypass.xcodeproj`
 - 選擇你的開發者帳號進行簽署
 - 修改 Bundle Identifier 為你自己的識別碼
 
@@ -130,7 +107,6 @@ git clone --recursive https://github.com/Nanako0129/iOS-SOCKS-Server.git
 ## 注意事項
 
 - 此應用程式需要在同一個 WiFi 網路、個人熱點或透過 USB 連線下使用。
-- 由於 iOS 的限制，應用程式必須保持在前景或背景執行
 - 不建議透過 App Store 發布，因為可能違反相關政策
 
 ## 授權

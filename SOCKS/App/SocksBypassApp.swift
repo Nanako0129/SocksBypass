@@ -4,25 +4,30 @@ import SwiftUI
 struct SocksBypassApp: App {
     @StateObject private var model = RelayViewModel()
 
-    /// The benchmark harness drives the same binary with `--benchmark-mode`, which
-    /// selects an engine and streams snapshots on stdout. Without it we are the
-    /// product: start the Network.framework core and show the shell.
-    private let benchmarkMode = ProcessInfo.processInfo.arguments.contains("--benchmark-mode")
-
     var body: some Scene {
         WindowGroup {
-            Group {
-                if benchmarkMode {
-                    BenchmarkStatusView()
-                } else {
-                    ContentView(model: model)
-                        .task { model.start() }
-                }
+#if BENCHMARK
+            // The measurement harness drives this same binary with
+            // `--benchmark-mode`, which selects an engine and streams snapshots on
+            // stdout. `BenchmarkRunner` links the HEV bridge, so it exists only in
+            // the Benchmark configuration.
+            if ProcessInfo.processInfo.arguments.contains("--benchmark-mode") {
+                BenchmarkStatusView()
+            } else {
+                shell
             }
+#else
+            shell
+#endif
         }
+    }
+
+    private var shell: some View {
+        ContentView(model: model).task { model.start() }
     }
 }
 
+#if BENCHMARK
 private struct BenchmarkStatusView: View {
     @State private var status = "starting"
     @State private var mode = ""
@@ -43,3 +48,4 @@ private struct BenchmarkStatusView: View {
         }
     }
 }
+#endif
