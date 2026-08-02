@@ -261,6 +261,8 @@ private final class RelaySession {
     /// Folding that into `pendingClientReadComplete` alone would hand the target a
     /// clean FIN, making a request that was cut short look like a whole one.
     private var pendingClientReadTruncated = false
+    /// One reply per request. Set as soon as a failure reply is committed.
+    private var requestRejected = false
     private var clientReady = false
     private var targetReady = false
     private var active = false
@@ -420,7 +422,10 @@ private final class RelaySession {
                 counters: counters,
                 localAddress: localAddress,
                 controlPeerAddress: controlRemoteAddress(),
-                declaredClientEndpoint: Self.declaredUdpEndpoint(request),
+                declaredClientEndpoint: Self.declaredUdpEndpoint(
+                    request,
+                    controlPeer: controlRemoteAddress()
+                ),
                 onFailure: { [weak self] in
                     guard let self else { return }
                     self.assertQueue()
@@ -447,16 +452,21 @@ private final class RelaySession {
     }
 
     /// The endpoint a UDP ASSOCIATE request says the client will send from, or
-    /// nil when it is unspecified. An all-zero address or port is the RFC's
-    /// "I don't know yet"; a domain name needs no test here because it fails to
-    /// parse as a numeric address and falls back to discovery on its own.
+    /// nil when nothing usable was declared. A port with an unspecified address
+    /// is the common case for a client behind NAT, and the control connection
+    /// already tells us the host, so the two are combined rather than thrown
+    /// away — a port-only declaration still narrows who can claim the
+    /// association. A domain name needs no test here because it fails to parse
+    /// as a numeric address and falls back to discovery on its own.
     private static func declaredUdpEndpoint(
-        _ request: Socks5HandshakeParser.Request
+        _ request: Socks5HandshakeParser.Request,
+        controlPeer: String?
     ) -> (address: String, port: UInt16)? {
         guard request.target.port != 0 else { return nil }
         let address = request.target.address
-        guard !address.allSatisfy({ $0 == "0" || $0 == "." || $0 == ":" }) else { return nil }
-        return (address, request.target.port)
+        let unspecified = address.allSatisfy { $0 == "0" || $0 == "." || $0 == ":" }
+        guard let host = unspecified ? controlPeer : address else { return nil }
+        return (host, request.target.port)
     }
 
     private func receiveUdpControl() {
@@ -542,6 +552,11 @@ private final class RelaySession {
         assertQueue()
         noteTargetState(state)
         guard !cleaned else { return }
+        // Committing to a failure reply ends this request. Without this a path
+        // that recovered to `.ready` inside the close window would send a second,
+        // contradictory reply on the same session, and repeated `.waiting`
+        // updates would each send another failure.
+        guard !requestRejected else { return }
 
         switch state {
         case .ready:
@@ -620,7 +635,8 @@ private final class RelaySession {
         event: NetworkTCPRelay.Event? = .connectRejected(reply: 0)
     ) {
         assertQueue()
-        guard !cleaned else { return }
+        guard !cleaned, !requestRejected else { return }
+        requestRejected = true
         switch event {
         case .connectRejected:
             emit(.connectRejected(reply: reply))

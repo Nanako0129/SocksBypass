@@ -101,7 +101,10 @@ def main(argv=None):
     try:
         with open(args.json_path, encoding="utf-8") as f: data = json.load(f)
         result = decide(data)
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+    # ArithmeticError covers the OverflowError a schema-valid but absurd integer
+    # produces on conversion to float, and division by zero. A fail-closed
+    # selector has to answer, not traceback.
+    except (OSError, ValueError, TypeError, ArithmeticError, json.JSONDecodeError) as exc:
         print(json.dumps({"error": "schema parse error: " + str(exc)}, separators=(",", ":")))
         return 2
     print(json.dumps(result, separators=(",", ":"), sort_keys=True))

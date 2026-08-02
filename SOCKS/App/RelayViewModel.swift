@@ -63,6 +63,10 @@ final class RelayViewModel: ObservableObject {
                 if event == .listenerFailed {
                     self.status = .failed("listener failed")
                     self.endpoints = []
+                    // Nothing left to keep alive for. Holding the audio session
+                    // would drain the battery indefinitely while serving nobody.
+                    self.keepAlive.stop()
+                    self.backgroundActive = false
                 }
                 self.append(Self.describe(event))
             }
@@ -261,6 +265,15 @@ final class BackgroundKeepAlive {
         guard !wanted else { return }
         wanted = true
         resumeIfNeeded()
+    }
+
+    /// Releases the session for good. `wanted` is cleared first so the periodic
+    /// resume does not immediately restart what this just stopped.
+    func stop() {
+        wanted = false
+        player.stop()
+        engine.stop()
+        try? AVAudioSession.sharedInstance().setActive(false)
     }
 
     func resumeIfNeeded() {
