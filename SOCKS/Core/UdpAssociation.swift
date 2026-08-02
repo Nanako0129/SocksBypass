@@ -190,17 +190,35 @@ final class UdpAssociation {
     private var clientAddress: SocketAddress?
     private let controlPeer: SocketAddress?
     private var resolutions: [String: Resolution] = [:]
+    /// Insertion order, so the cache can be evicted without a second index.
+    private var resolutionOrder: [String] = []
+    private var pendingResolutions = 0
+    // The proxy answers without authentication and the control connection can be
+    // held open indefinitely, so a client can stream unique hostnames faster than
+    // a serial resolver drains them. Both the cache and the number of lookups in
+    // flight are capped; over the limit a datagram is simply dropped, which UDP
+    // already permits.
+    private static let resolutionCacheLimit = 256
+    private static let pendingResolutionLimit = 8
 
     init(
         queue: DispatchQueue,
         counters: TrafficCounters,
         localAddress: String,
         controlPeerAddress: String?,
+        declaredClientEndpoint: (address: String, port: UInt16)? = nil,
         onFailure: @escaping () -> Void
     ) throws {
         self.queue = queue
         self.counters = counters
         self.onFailure = onFailure
+        // RFC 1928 lets the client state the endpoint it will send from. Honouring
+        // it closes the window where another process on the same host claims the
+        // association by getting a well-formed datagram in first. An unspecified
+        // endpoint still falls back to discovery.
+        clientAddress = declaredClientEndpoint.flatMap {
+            Self.numericAddress($0.address, port: $0.port)
+        }
         controlPeer = controlPeerAddress.flatMap { Self.numericAddress($0, port: 0) }
         resolutionQueue = DispatchQueue(
             label: "com.nanako.socksbypass.benchmark.udp-dns",
@@ -366,16 +384,39 @@ final class UdpAssociation {
             case .pending, .failed:
                 return
             case nil:
+                guard pendingResolutions < Self.pendingResolutionLimit else { return }
+                pendingResolutions += 1
                 resolutions[key] = .pending
+                resolutionOrder.append(key)
+                evictResolutions()
                 let host = decoded.header.address
                 resolutionQueue.async { [weak self] in
                     let result = Self.resolve(host)
                     self?.queue.async { [weak self] in
                         guard let self, !self.closed else { return }
+                        self.pendingResolutions -= 1
+                        guard self.resolutions[key] != nil else { return }
                         self.resolutions[key] = result.isEmpty ? .failed : .resolved(result)
                     }
                 }
             }
+        }
+    }
+
+    /// Drops the oldest settled entries once the cache is over its limit. Pending
+    /// lookups are skipped rather than evicted so their completion still has an
+    /// entry to write into; the separate in-flight cap bounds those.
+    private func evictResolutions() {
+        assertQueue()
+        var index = 0
+        while resolutions.count > Self.resolutionCacheLimit, index < resolutionOrder.count {
+            let key = resolutionOrder[index]
+            if case .pending = resolutions[key] {
+                index += 1
+                continue
+            }
+            resolutions.removeValue(forKey: key)
+            resolutionOrder.remove(at: index)
         }
     }
 

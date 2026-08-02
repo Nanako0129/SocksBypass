@@ -558,7 +558,11 @@ def run_correctness(proxy, target_host, target):
     expect_request_rejection(proxy, b"\x04\x01\x00\x01" + valid_address)
     expect_request_rejection(proxy, b"\x05\x01\x01\x01" + valid_address)
     expect_request_rejection(proxy, b"\x05\x02\x00\x01" + valid_address)
-    expect_request_rejection(proxy, b"\x05\x01\x00\x03\x01a\x00\x50")
+    # ATYP 0x02 is unassigned. The previous case sent ATYP 0x03 with domain "a",
+    # a perfectly valid request that only failed because "a" does not resolve --
+    # so it never exercised address-type rejection and would have started passing
+    # traffic on any network where that name resolves.
+    expect_request_rejection(proxy, b"\x05\x01\x00\x02" + valid_address)
     checks.extend(("invalid_request_version", "invalid_rsv", "invalid_cmd", "invalid_atyp"))
 
     target.wait_results(13, 120)

@@ -55,7 +55,17 @@ final class RelayViewModel: ObservableObject {
     func start() {
         guard timer == nil else { return }
         relay.eventHandler = { [weak self] event in
-            Task { @MainActor in self?.append(Self.describe(event)) }
+            Task { @MainActor in
+                guard let self else { return }
+                // A listener that dies after startup never reaches the one-shot
+                // start callback, so without this the screen keeps advertising an
+                // endpoint that stopped answering.
+                if event == .listenerFailed {
+                    self.status = .failed("listener failed")
+                    self.endpoints = []
+                }
+                self.append(Self.describe(event))
+            }
         }
         relay.start { [weak self] result in
             Task { @MainActor in
@@ -103,6 +113,7 @@ final class RelayViewModel: ObservableObject {
         case .connectRejected(let reply): return String(format: "CONNECT rejected 0x%02x", reply)
         case .udpAssociated: return "UDP ASSOCIATE established"
         case .udpAssociateFailed: return "UDP ASSOCIATE failed"
+        case .listenerFailed: return "listener failed — no longer accepting connections"
         }
     }
 

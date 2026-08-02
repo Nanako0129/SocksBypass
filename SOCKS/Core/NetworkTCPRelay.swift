@@ -11,6 +11,10 @@ final class NetworkTCPRelay {
         case connectRejected(reply: UInt8)
         case udpAssociated
         case udpAssociateFailed
+        /// The listener died after it had already reported success. The start
+        /// callback fires once, so without this the shell keeps showing a
+        /// listening endpoint for a relay that stopped serving.
+        case listenerFailed
     }
 
     enum RelayError: Error, Equatable {
@@ -165,6 +169,9 @@ final class NetworkTCPRelay {
             let completion = startCompletion
             startCompletion = nil
             completion?(.failure(.listenerFailed))
+            // Fires whether or not anyone is still holding the start callback:
+            // after `.ready` that callback is gone and this is the only signal.
+            eventHandler?(.listenerFailed)
             let currentSessions = Array(sessions.values)
             currentSessions.forEach { $0.cancel() }
             sessions.removeAll(keepingCapacity: true)
@@ -250,6 +257,10 @@ private final class RelaySession {
     private var udpAssociation: UdpAssociation?
     private var pendingInitialPayload = Data()
     private var pendingClientReadComplete = false
+    /// The handshake receive ended in an error rather than a clean end of stream.
+    /// Folding that into `pendingClientReadComplete` alone would hand the target a
+    /// clean FIN, making a request that was cut short look like a whole one.
+    private var pendingClientReadTruncated = false
     private var clientReady = false
     private var targetReady = false
     private var active = false
@@ -366,6 +377,7 @@ private final class RelaySession {
 
             let output = self.parser.feed(data ?? Data())
             self.pendingClientReadComplete = self.pendingClientReadComplete || isComplete || error != nil
+            self.pendingClientReadTruncated = self.pendingClientReadTruncated || (error != nil && !isComplete)
             let closeAfterResponses = output.shouldClose || (self.pendingClientReadComplete && output.request == nil)
 
             self.sendControlResponses(output.replies, final: closeAfterResponses) { success in
@@ -391,14 +403,14 @@ private final class RelaySession {
         }
     }
 
-    private func beginUdpAssociation(_: Socks5HandshakeParser.Request) {
+    private func beginUdpAssociation(_ request: Socks5HandshakeParser.Request) {
         assertQueue()
         handshakeTimeout?.cancel()
         handshakeTimeout = nil
         guard !cleaned, target == nil, udpAssociation == nil,
               let localAddress = controlLocalAddress() else {
             emit(.udpAssociateFailed)
-            sendConnectFailure(0x01)
+            sendRequestFailure(0x01, event: nil)
             return
         }
 
@@ -408,6 +420,7 @@ private final class RelaySession {
                 counters: counters,
                 localAddress: localAddress,
                 controlPeerAddress: controlRemoteAddress(),
+                declaredClientEndpoint: Self.declaredUdpEndpoint(request),
                 onFailure: { [weak self] in
                     guard let self else { return }
                     self.assertQueue()
@@ -416,7 +429,7 @@ private final class RelaySession {
             )
             guard let reply = association.replyData(localAddress: localAddress) else {
                 association.cancel()
-                sendConnectFailure(0x01)
+                sendRequestFailure(0x01, event: .udpAssociateFailed)
                 return
             }
             udpAssociation = association
@@ -429,8 +442,21 @@ private final class RelaySession {
                 self.receiveUdpControl()
             }
         } catch {
-            sendConnectFailure(0x01)
+            sendRequestFailure(0x01, event: .udpAssociateFailed)
         }
+    }
+
+    /// The endpoint a UDP ASSOCIATE request says the client will send from, or
+    /// nil when it is unspecified. An all-zero address or port is the RFC's
+    /// "I don't know yet"; a domain name needs no test here because it fails to
+    /// parse as a numeric address and falls back to discovery on its own.
+    private static func declaredUdpEndpoint(
+        _ request: Socks5HandshakeParser.Request
+    ) -> (address: String, port: UInt16)? {
+        guard request.target.port != 0 else { return nil }
+        let address = request.target.address
+        guard !address.allSatisfy({ $0 == "0" || $0 == "." || $0 == ":" }) else { return nil }
+        return (address, request.target.port)
     }
 
     private func receiveUdpControl() {
@@ -475,7 +501,7 @@ private final class RelaySession {
         handshakeTimeout = nil
         guard !cleaned, target == nil,
               let port = NWEndpoint.Port(rawValue: request.target.port) else {
-            sendConnectFailure(0x01)
+            sendRequestFailure(0x01)
             return
         }
 
@@ -488,8 +514,28 @@ private final class RelaySession {
         target.stateUpdateHandler = { [weak self] state in
             self?.handleTargetState(state)
         }
-        emit(.connectEstablished)
         target.start(queue: queue)
+    }
+
+    /// The local address the outbound connection actually bound to, for BND.ADDR
+    /// and BND.PORT. Returning zeros told clients nothing and reported IPv6
+    /// targets as an IPv4 zero endpoint. Falls back to nil, which keeps the old
+    /// all-zero reply, when the path has no usable local endpoint.
+    private func boundEndpoint() -> Socks5HandshakeParser.BoundEndpoint? {
+        assertQueue()
+        guard case .hostPort(let host, let port)? = target?.currentPath?.localEndpoint else {
+            return nil
+        }
+        // Raw bytes straight from the address, never a formatted string: an IPv6
+        // description can carry a `%interface` scope that would not round-trip.
+        switch host {
+        case .ipv4(let address):
+            return .init(atyp: 0x01, address: address.rawValue, port: port.rawValue)
+        case .ipv6(let address):
+            return .init(atyp: 0x04, address: address.rawValue, port: port.rawValue)
+        default:
+            return nil
+        }
     }
 
     private func handleTargetState(_ state: NWConnection.State) {
@@ -501,7 +547,12 @@ private final class RelaySession {
         case .ready:
             guard !targetReady else { return }
             targetReady = true
-            sendControlResponses([Socks5HandshakeParser.requestReply(0x00)], final: false) { success in
+            // Only now is the outbound connection real. Emitting on construction
+            // logged "CONNECT established" for every refused or unreachable
+            // attempt, immediately followed by "CONNECT rejected".
+            emit(.connectEstablished)
+            let reply = Socks5HandshakeParser.requestReply(0x00, bound: boundEndpoint())
+            sendControlResponses([reply], final: false) { success in
                 guard success, !self.cleaned else { return }
                 self.active = true
                 self.counters.sessionOpened(self.id)
@@ -514,8 +565,8 @@ private final class RelaySession {
                         payload,
                         flow: .upload,
                         complete: self.pendingClientReadComplete,
-                        terminalError: false,
-                        truncated: false
+                        terminalError: self.pendingClientReadTruncated,
+                        truncated: self.pendingClientReadTruncated
                     )
                 } else {
                     self.receiveClientPayload()
@@ -535,7 +586,7 @@ private final class RelaySession {
                     receiveTargetPayload()
                 }
             } else {
-                sendConnectFailure(Self.replyCode(for: error))
+                sendRequestFailure(Self.replyCode(for: error))
             }
 
         case .cancelled:
@@ -549,7 +600,7 @@ private final class RelaySession {
             // A proxy client is owed an answer instead: without this the CONNECT
             // never receives a reply and the session hangs indefinitely.
             if !active {
-                sendConnectFailure(Self.replyCode(for: error))
+                sendRequestFailure(Self.replyCode(for: error))
             }
 
         case .setup, .preparing:
@@ -560,10 +611,24 @@ private final class RelaySession {
         }
     }
 
-    private func sendConnectFailure(_ reply: UInt8) {
+    /// Sending the SOCKS failure reply and classifying the event are separate
+    /// concerns: a UDP ASSOCIATE that fails is not a rejected CONNECT, and
+    /// emitting both put two contradictory lines in the activity log. Pass `nil`
+    /// when the caller has already emitted the right event.
+    private func sendRequestFailure(
+        _ reply: UInt8,
+        event: NetworkTCPRelay.Event? = .connectRejected(reply: 0)
+    ) {
         assertQueue()
         guard !cleaned else { return }
-        emit(.connectRejected(reply: reply))
+        switch event {
+        case .connectRejected:
+            emit(.connectRejected(reply: reply))
+        case .some(let other):
+            emit(other)
+        case nil:
+            break
+        }
         sendControlResponses([Socks5HandshakeParser.requestReply(reply)], final: true) { success in
             if success {
                 self.finishAfterGracefulControlClose()

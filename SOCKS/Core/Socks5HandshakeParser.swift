@@ -185,6 +185,27 @@ struct Socks5HandshakeParser {
         Data([0x05, reply, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
     }
 
+    struct BoundEndpoint {
+        let atyp: UInt8
+        let address: Data
+        let port: UInt16
+    }
+
+    /// BND.ADDR and BND.PORT for a successful reply. An all-zero IPv4 endpoint
+    /// told the client nothing and misreported IPv6 targets; when the real bound
+    /// endpoint is unavailable this still falls back to that form rather than
+    /// inventing one.
+    static func requestReply(_ reply: UInt8, bound: BoundEndpoint?) -> Data {
+        guard let bound, bound.address.count == (bound.atyp == 0x01 ? 4 : 16) else {
+            return requestReply(reply)
+        }
+        var data = Data([0x05, reply, 0x00, bound.atyp])
+        data.append(bound.address)
+        data.append(UInt8(bound.port >> 8))
+        data.append(UInt8(bound.port & 0xFF))
+        return data
+    }
+
     private static func address(_ kind: AddressKind, from bytes: ArraySlice<UInt8>) -> String {
         switch kind {
         case .ipv4:

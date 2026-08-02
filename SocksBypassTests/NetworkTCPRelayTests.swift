@@ -56,7 +56,7 @@ final class NetworkTCPRelayTests: XCTestCase {
         defer { stop(relay) }
 
         let request = Data([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x01])
-        let exchange = try socksExchange(relayPort: relayPort, request: request, minimumBytes: 12)
+        let exchange = try socksExchange(relayPort: relayPort, request: request, expectedPayload: 0)
 
         XCTAssertEqual(exchange.methodReply, Data([0x05, 0x00]))
         XCTAssertEqual(exchange.connectReply.count, 10)
@@ -81,7 +81,7 @@ final class NetworkTCPRelayTests: XCTestCase {
         let payload = Data((0..<1_500).map { UInt8(truncatingIfNeeded: $0) })
         let exchange = try socksExchange(
             relayPort: relayPort, request: request, payload: payload,
-            minimumBytes: 12 + payload.count
+            expectedPayload: payload.count
         )
         XCTAssertEqual(exchange.connectReply[1], 0x00)
         XCTAssertEqual(exchange.payload, payload)
@@ -105,7 +105,7 @@ final class NetworkTCPRelayTests: XCTestCase {
         let payload = Data((0..<1_500).map { UInt8(truncatingIfNeeded: 255 - $0) })
         let exchange = try socksExchange(
             relayPort: relayPort, request: request, payload: payload,
-            minimumBytes: 12 + payload.count
+            expectedPayload: payload.count
         )
         XCTAssertEqual(exchange.connectReply[1], 0x00)
         XCTAssertEqual(exchange.payload, payload)
@@ -131,7 +131,7 @@ final class NetworkTCPRelayTests: XCTestCase {
 
         let exchange = try socksExchange(
             relayPort: relayPort, request: request, payload: payload,
-            minimumBytes: 12 + payload.count, timeout: 30
+            expectedPayload: payload.count, timeout: 30
         )
         XCTAssertEqual(exchange.connectReply[1], 0x00)
         XCTAssertEqual(exchange.payload.count, payload.count)
@@ -168,13 +168,29 @@ final class NetworkTCPRelayTests: XCTestCase {
         return try XCTUnwrap(port)
     }
 
+    /// Length of a CONNECT reply given its ATYP, or nil if not yet readable. The
+    /// reply is not a fixed ten bytes: a successful CONNECT now carries the real
+    /// bound endpoint, so an IPv6 target answers with twenty-two.
+    private static func connectReplyLength(_ reply: Data) -> Int? {
+        guard reply.count >= 4 else { return nil }
+        switch reply[reply.startIndex + 3] {
+        case 0x01: return 10
+        case 0x04: return 22
+        case 0x03:
+            guard reply.count >= 5 else { return nil }
+            return 7 + Int(reply[reply.startIndex + 4])
+        default: return nil
+        }
+    }
+
     /// Sends the greeting, the request and any payload as one write-closed stream,
-    /// then reads until `minimumBytes` have arrived or the relay ends the stream.
+    /// then reads the method reply, the full CONNECT reply, and `expectedPayload`
+    /// bytes after it.
     private func socksExchange(
         relayPort: UInt16,
         request: Data,
         payload: Data = Data(),
-        minimumBytes: Int,
+        expectedPayload: Int,
         timeout: TimeInterval = 10
     ) throws -> Exchange {
         let complete = expectation(description: "SOCKS exchange")
@@ -197,7 +213,8 @@ final class NetworkTCPRelayTests: XCTestCase {
             connection.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { data, _, isComplete, error in
                 guard !finished else { return }
                 if let data { received.append(data) }
-                if received.count >= minimumBytes {
+                let replyLength = Self.connectReplyLength(Data(received.dropFirst(2)))
+                if let replyLength, received.count >= 2 + replyLength + expectedPayload {
                     finish(nil)
                 } else if let error {
                     finish(error)
@@ -241,8 +258,10 @@ final class NetworkTCPRelayTests: XCTestCase {
         if let failure { throw failure }
         var exchange = Exchange()
         exchange.methodReply = Data(received.prefix(2))
-        exchange.connectReply = Data(received.dropFirst(2).prefix(10))
-        exchange.payload = Data(received.dropFirst(12))
+        let rest = Data(received.dropFirst(2))
+        let replyLength = Self.connectReplyLength(rest) ?? 10
+        exchange.connectReply = Data(rest.prefix(replyLength))
+        exchange.payload = Data(rest.dropFirst(replyLength))
         return exchange
     }
 
