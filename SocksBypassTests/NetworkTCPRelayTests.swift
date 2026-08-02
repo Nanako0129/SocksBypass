@@ -47,6 +47,205 @@ final class NetworkTCPRelayTests: XCTestCase {
         stop(relay)
     }
 
+    /// A refused target used to hang: Network.framework parks an unreachable
+    /// outbound connection in `.waiting` and keeps retrying, so the client waited
+    /// for a reply that never came. It is owed 0x05 instead.
+    func testRefusedConnectRepliesConnectionRefused() throws {
+        let relay = makeRelay()
+        let relayPort = try start(relay)
+        defer { stop(relay) }
+
+        let request = Data([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x01])
+        let exchange = try socksExchange(relayPort: relayPort, request: request, minimumBytes: 12)
+
+        XCTAssertEqual(exchange.methodReply, Data([0x05, 0x00]))
+        XCTAssertEqual(exchange.connectReply.count, 10)
+        XCTAssertEqual(exchange.connectReply[1], 0x05)
+    }
+
+    func testDomainNameConnectReachesTarget() throws {
+        let echo = OneShotEchoServer()
+        let targetPort = try startEcho(echo, host: "127.0.0.1")
+        defer { echo.stop() }
+
+        let relay = makeRelay()
+        let relayPort = try start(relay)
+        defer { stop(relay) }
+
+        let name = Array("localhost".utf8)
+        var request = Data([0x05, 0x01, 0x00, 0x03, UInt8(name.count)])
+        request.append(contentsOf: name)
+        request.append(UInt8(targetPort >> 8))
+        request.append(UInt8(targetPort & 0xFF))
+
+        let payload = Data((0..<1_500).map { UInt8(truncatingIfNeeded: $0) })
+        let exchange = try socksExchange(
+            relayPort: relayPort, request: request, payload: payload,
+            minimumBytes: 12 + payload.count
+        )
+        XCTAssertEqual(exchange.connectReply[1], 0x00)
+        XCTAssertEqual(exchange.payload, payload)
+    }
+
+    func testIPv6ConnectReachesTarget() throws {
+        let echo = OneShotEchoServer()
+        let targetPort = try startEcho(echo, host: "::1")
+        defer { echo.stop() }
+
+        let relay = makeRelay()
+        let relayPort = try start(relay)
+        defer { stop(relay) }
+
+        var request = Data([0x05, 0x01, 0x00, 0x04])
+        request.append(contentsOf: [UInt8](repeating: 0, count: 15))
+        request.append(0x01)                                   // ::1
+        request.append(UInt8(targetPort >> 8))
+        request.append(UInt8(targetPort & 0xFF))
+
+        let payload = Data((0..<1_500).map { UInt8(truncatingIfNeeded: 255 - $0) })
+        let exchange = try socksExchange(
+            relayPort: relayPort, request: request, payload: payload,
+            minimumBytes: 12 + payload.count
+        )
+        XCTAssertEqual(exchange.connectReply[1], 0x00)
+        XCTAssertEqual(exchange.payload, payload)
+    }
+
+    /// Enough traffic to cross many receive/forward cycles in both directions.
+    /// The defect this guards against dropped one buffer's worth of payload
+    /// between being received and being committed, which a small transfer that
+    /// fits in a single receive cannot expose.
+    func testLargeTransferIsByteExact() throws {
+        let echo = OneShotEchoServer()
+        let targetPort = try startEcho(echo, host: "127.0.0.1")
+        defer { echo.stop() }
+
+        let relay = makeRelay()
+        let relayPort = try start(relay)
+        defer { stop(relay) }
+
+        let payload = Data((0..<(3 * 1024 * 1024)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        var request = Data([0x05, 0x01, 0x00, 0x01, 127, 0, 0, 1])
+        request.append(UInt8(targetPort >> 8))
+        request.append(UInt8(targetPort & 0xFF))
+
+        let exchange = try socksExchange(
+            relayPort: relayPort, request: request, payload: payload,
+            minimumBytes: 12 + payload.count, timeout: 30
+        )
+        XCTAssertEqual(exchange.connectReply[1], 0x00)
+        XCTAssertEqual(exchange.payload.count, payload.count)
+        XCTAssertEqual(exchange.payload, payload)
+
+        let idle = try waitForIdleSnapshot(relay)
+        XCTAssertEqual(idle.uploadBytes, UInt64(payload.count))
+        XCTAssertEqual(idle.downloadBytes, UInt64(payload.count))
+    }
+
+    private struct Exchange {
+        var methodReply = Data()
+        var connectReply = Data()
+        var payload = Data()
+    }
+
+    private func makeRelay() -> NetworkTCPRelay {
+        NetworkTCPRelay(
+            countingEnabled: true,
+            bindHost: "127.0.0.1",
+            port: 0,
+            queueLabel: "NetworkTCPRelayTests.relay"
+        )
+    }
+
+    private func startEcho(_ echo: OneShotEchoServer, host: String) throws -> UInt16 {
+        let ready = expectation(description: "echo ready")
+        var port: UInt16?
+        echo.start(host: host) { result in
+            port = try? result.get()
+            ready.fulfill()
+        }
+        wait(for: [ready], timeout: 5)
+        return try XCTUnwrap(port)
+    }
+
+    /// Sends the greeting, the request and any payload as one write-closed stream,
+    /// then reads until `minimumBytes` have arrived or the relay ends the stream.
+    private func socksExchange(
+        relayPort: UInt16,
+        request: Data,
+        payload: Data = Data(),
+        minimumBytes: Int,
+        timeout: TimeInterval = 10
+    ) throws -> Exchange {
+        let complete = expectation(description: "SOCKS exchange")
+        let queue = DispatchQueue(label: "NetworkTCPRelayTests.exchange")
+        let connection = NWConnection(
+            host: "127.0.0.1", port: NWEndpoint.Port(rawValue: relayPort)!, using: .tcp
+        )
+        var received = Data()
+        var failure: Error?
+        var finished = false
+
+        func finish(_ error: Error?) {
+            guard !finished else { return }
+            finished = true
+            failure = error
+            complete.fulfill()
+        }
+
+        func receive() {
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 256 * 1024) { data, _, isComplete, error in
+                guard !finished else { return }
+                if let data { received.append(data) }
+                if received.count >= minimumBytes {
+                    finish(nil)
+                } else if let error {
+                    finish(error)
+                } else if isComplete {
+                    finish(TestError.truncatedReply)
+                } else {
+                    receive()
+                }
+            }
+        }
+
+        connection.stateUpdateHandler = { state in
+            guard !finished else { return }
+            switch state {
+            case .ready:
+                var outbound = Data([0x05, 0x01, 0x00])
+                outbound.append(request)
+                outbound.append(payload)
+                connection.send(
+                    content: outbound,
+                    contentContext: .finalMessage,
+                    isComplete: true,
+                    completion: .contentProcessed { error in
+                        if let error { finish(error) } else { receive() }
+                    }
+                )
+            case .failed(let error):
+                finish(error)
+            case .cancelled:
+                finish(TestError.truncatedReply)
+            case .setup, .preparing, .waiting:
+                break
+            @unknown default:
+                finish(TestError.unknownState)
+            }
+        }
+        connection.start(queue: queue)
+        wait(for: [complete], timeout: timeout)
+        connection.cancel()
+
+        if let failure { throw failure }
+        var exchange = Exchange()
+        exchange.methodReply = Data(received.prefix(2))
+        exchange.connectReply = Data(received.dropFirst(2).prefix(10))
+        exchange.payload = Data(received.dropFirst(12))
+        return exchange
+    }
+
     private func start(_ relay: NetworkTCPRelay) throws -> UInt16 {
         let ready = expectation(description: "relay ready")
         var result: Result<UInt16, NetworkTCPRelay.RelayError>?
@@ -184,11 +383,11 @@ private final class OneShotEchoServer {
     private var listener: NWListener?
     private var connections: [UUID: NWConnection] = [:]
 
-    func start(_ completion: @escaping (Result<UInt16, Error>) -> Void) {
+    func start(host: String = "127.0.0.1", _ completion: @escaping (Result<UInt16, Error>) -> Void) {
         queue.async {
             let parameters = NWParameters.tcp
             parameters.allowLocalEndpointReuse = true
-            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+            parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(host), port: .any)
 
             do {
                 let listener = try NWListener(using: parameters)
@@ -257,25 +456,48 @@ private final class OneShotEchoServer {
             }
 
             let payload = data ?? Data()
-            if payload.isEmpty, !isComplete {
-                self.relay(connection, id: id)
+            guard !payload.isEmpty else {
+                // The peer's FIN often arrives on its own receive, with no data.
+                // Skipping the write-close here leaves the relay's download
+                // direction open forever and the session never goes idle.
+                if isComplete {
+                    self.halfClose(connection, id: id)
+                } else {
+                    self.relay(connection, id: id)
+                }
                 return
             }
 
+            // The write-close is a separate send. Carrying it on the same call as
+            // the last chunk left that send's completion unfired and the echo
+            // silently short by a whole buffer, which reads as a relay defect.
             connection.send(
-                content: payload.isEmpty ? nil : payload,
-                contentContext: isComplete ? .finalMessage : .defaultMessage,
-                isComplete: isComplete,
+                content: payload,
+                contentContext: .defaultMessage,
+                isComplete: false,
                 completion: .contentProcessed { error in
-                    if error != nil || isComplete {
+                    if error != nil {
                         connection.cancel()
                         self.connections.removeValue(forKey: id)
+                    } else if isComplete {
+                        self.halfClose(connection, id: id)
                     } else {
                         self.relay(connection, id: id)
                     }
                 }
             )
         }
+    }
+}
+
+private extension OneShotEchoServer {
+    func halfClose(_ connection: NWConnection, id: UUID) {
+        connection.send(
+            content: nil,
+            contentContext: .finalMessage,
+            isComplete: true,
+            completion: .contentProcessed { _ in }
+        )
     }
 }
 
