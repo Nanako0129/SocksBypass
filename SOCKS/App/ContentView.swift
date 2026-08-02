@@ -7,6 +7,7 @@ struct ContentView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 endpoint
+                background
                 exposureWarning
                 speed
                 totals
@@ -27,13 +28,46 @@ struct ContentView: View {
             switch model.status {
             case .starting:
                 Text("starting…").font(.title2)
-            case .listening(let address, let port):
-                Text("\(address):\(String(port))").font(.title2).textSelection(.enabled)
+            case .listening(let port):
+                // Every reachable address, not a guess at which one matters. The
+                // hotspot gateway and the Wi-Fi address are different interfaces
+                // and only the user knows how their client is arriving.
+                if model.endpoints.isEmpty {
+                    Text("no reachable address").font(.title3).foregroundStyle(.orange)
+                } else {
+                    ForEach(model.endpoints) { endpoint in
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(endpoint.role)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(minWidth: 64, alignment: .leading)
+                            Text("\(endpoint.address):\(String(port))")
+                                .font(.title3)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
                 Text("NO AUTH · CONNECT · UDP ASSOCIATE")
                     .font(.caption).foregroundStyle(.secondary)
             case .failed(let reason):
                 Text(reason).font(.title3).foregroundStyle(.red)
             }
+        }
+    }
+
+    /// Whether the app will survive being backgrounded or the screen locking.
+    /// Without this the only way to tell was to probe the port from another
+    /// machine and find out the hard way.
+    private var background: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(model.backgroundActive ? Color.green : Color.orange)
+                .frame(width: 8, height: 8)
+            Text(model.backgroundActive
+                 ? "BACKGROUND · keeps running when closed or locked"
+                 : "FOREGROUND ONLY · stops when closed or locked")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

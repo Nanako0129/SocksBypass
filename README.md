@@ -17,6 +17,9 @@ network can route traffic through it.
 - **Addressing**: IPv4, IPv6, and domain names (ATYP `0x01` / `0x04` / `0x03`)
 - **Traffic monitoring**: live upload/download rate, cumulative totals, active
   TCP/UDP session counts, and a recent-activity log
+- **Reachable addresses**: every interface a client could connect to, hotspot
+  first, refreshed as you switch networks
+- **Keeps serving in the background** — see the caveats below
 - Written in Swift on Network.framework; no C proxy is linked into the app
 
 ## Requirements
@@ -58,6 +61,29 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 For USB instead of Wi-Fi, use [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios)
 forward mode: `ios forward 1080 9876`, then point the client at `127.0.0.1`.
+
+## Running in the background
+
+The app keeps serving after you switch away or the screen locks. It does that by
+holding an active audio session that plays silence, which is why it declares the
+`audio` background mode.
+
+This is a workaround, not a sanctioned mechanism. iOS offers no supported way for
+an ordinary app to keep an inbound listener alive: `BGTaskScheduler` only grants
+short opportunistic wake-ups, `beginBackgroundTask` only buys seconds to finish
+work in flight, and Network Extension — the one API designed for networking that
+outlives its app — exists to tunnel *this* device's traffic outward, not to serve
+LAN peers connecting in. Apple's audio background mode is meant for apps whose
+purpose is playing audio, and App Review rejects this use of it. That is one more
+reason this app is not App Store material.
+
+What it costs you: the app stays scheduled continuously, so it draws power the
+whole time it is running. Quit it when you are done. The audio session is
+configured to mix with others, so it never interrupts whatever you are actually
+listening to, and the samples are silent.
+
+The main screen shows whether the keep-alive is actually in effect. If it reads
+`FOREGROUND ONLY`, the app will stop serving as soon as it leaves the screen.
 
 ## Known limitation
 
@@ -117,6 +143,8 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 - **SOCKS5**：NO AUTH、`CONNECT`、`UDP ASSOCIATE`
 - **位址型別**：IPv4、IPv6、網域名稱（ATYP `0x01` / `0x04` / `0x03`）
 - **流量監控**：即時上傳/下載速率、累計流量、TCP/UDP 連線數、近期活動記錄
+- **可連位址**：列出所有客戶端可連的介面位址，熱點優先，切換網路時即時更新
+- **背景持續服務** —— 注意事項見下方
 - 以 Swift 搭配 Network.framework 實作，app 內不再連結任何 C 代理程式
 
 ## 需求
@@ -158,6 +186,24 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 如果想用 USB 而非 Wi-Fi，可以使用 [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios)
 的轉發模式：`ios forward 1080 9876`，用戶端指向 `127.0.0.1`。
+
+## 背景運作
+
+切換到其他 app 或鎖屏之後，代理仍會繼續服務。做法是持續持有一個播放靜音的音訊
+工作階段，這也是它宣告 `audio` 背景模式的原因。
+
+這是變通手法，不是被認可的機制。iOS 沒有提供任何受支援的途徑讓一般 app 維持入站
+監聽：`BGTaskScheduler` 只給系統排定的短暫喚醒，`beginBackgroundTask` 只換到幾秒
+用來收尾，而 Network Extension——唯一為「網路行為活過 app」設計的 API——是用來把
+**本機**流量導出去的，不是對區網提供入站服務。Apple 的 audio 背景模式本意是給功能
+本身就是播放音訊的 app，App Review 會擋下這種用法。這也是本專案不適合上架的原因
+之一。
+
+代價：app 會持續被排程，執行期間一直耗電，用完請關掉。音訊工作階段設定為與其他
+來源混音，所以不會打斷你正在聽的東西，取樣本身也是靜音。
+
+主畫面會顯示保活是否真的生效。如果顯示 `FOREGROUND ONLY`，代表 app 一離開畫面就
+會停止服務。
 
 ## 已知限制
 
