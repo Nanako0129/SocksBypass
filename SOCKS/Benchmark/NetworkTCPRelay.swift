@@ -229,6 +229,7 @@ private enum CleanupReason: String {
     case forwardSendError
     case halfCloseSendError
     case terminalErrorAfterHalfClose
+    case upstreamTruncated
     case bothDirectionsClosed
 }
 
@@ -513,7 +514,8 @@ private final class RelaySession {
                         payload,
                         flow: .upload,
                         complete: self.pendingClientReadComplete,
-                        terminalError: false
+                        terminalError: false,
+                        truncated: false
                     )
                 } else {
                     self.receiveClientPayload()
@@ -634,7 +636,10 @@ private final class RelaySession {
             let payload = data ?? Data()
             self.noteReceived(payload.count, .upload, error: error, isComplete: isComplete)
             if !payload.isEmpty || isComplete {
-                self.forward(payload, flow: .upload, complete: isComplete || error != nil, terminalError: error != nil)
+                self.forward(payload, flow: .upload,
+                             complete: isComplete || error != nil,
+                             terminalError: error != nil,
+                             truncated: error != nil && !isComplete)
             } else if error != nil {
                 if let target = self.target, !self.clientReadComplete {
                     self.closeDirectionThenCleanup(to: target, flow: .upload)
@@ -663,7 +668,10 @@ private final class RelaySession {
             let payload = data ?? Data()
             self.noteReceived(payload.count, .download, error: error, isComplete: isComplete)
             if !payload.isEmpty || isComplete {
-                self.forward(payload, flow: .download, complete: isComplete || error != nil, terminalError: error != nil)
+                self.forward(payload, flow: .download,
+                             complete: isComplete || error != nil,
+                             terminalError: error != nil,
+                             truncated: error != nil && !isComplete)
             } else if error != nil {
                 if !self.targetReadComplete {
                     self.closeDirectionThenCleanup(to: self.client, flow: .download)
@@ -676,7 +684,7 @@ private final class RelaySession {
         }
     }
 
-    private func forward(_ data: Data, flow: Flow, complete: Bool, terminalError: Bool) {
+    private func forward(_ data: Data, flow: Flow, complete: Bool, terminalError: Bool, truncated: Bool) {
         assertQueue()
         guard !cleaned else { return }
 
@@ -698,7 +706,8 @@ private final class RelaySession {
 
         guard !data.isEmpty else {
             if complete {
-                sendHalfClose(to: destination, flow: flow, terminalError: terminalError)
+                finishDirection(to: destination, flow: flow,
+                                terminalError: terminalError, truncated: truncated)
             }
             return
         }
@@ -722,7 +731,8 @@ private final class RelaySession {
                 self.note(data.count, direction)
                 if complete {
                     // Stays pending: the half-close is the same direction's send.
-                    self.sendHalfClose(to: destination, flow: flow, terminalError: terminalError)
+                    self.finishDirection(to: destination, flow: flow,
+                                         terminalError: terminalError, truncated: truncated)
                 } else {
                     self.setSendPending(flow, false)
                     self.receiveNextPayload(for: flow)
@@ -739,6 +749,29 @@ private final class RelaySession {
         case .download:
             downloadSendPending = pending
         }
+    }
+
+    /// A stream that ended in an error without the stack marking it complete was
+    /// cut short. Passing that on as a clean FIN tells the peer the transfer ended
+    /// normally, so a truncated download reads exactly like a whole one — silent
+    /// corruption, which is the one outcome a proxy must never produce. Abort
+    /// instead: a reset is the only in-band way to say the transfer failed.
+    ///
+    /// The cost is the tail we already forwarded but that the peer may not have
+    /// read yet; a reset can discard it. That is the right trade. The bytes belong
+    /// to a transfer that is already incomplete, and delivering them under a clean
+    /// end-of-stream is what makes the loss invisible.
+    private func finishDirection(to destination: NWConnection, flow: Flow,
+                                 terminalError: Bool, truncated: Bool) {
+        assertQueue()
+        guard !cleaned else { return }
+        guard truncated else {
+            sendHalfClose(to: destination, flow: flow, terminalError: terminalError)
+            return
+        }
+        setSendPending(flow, false)
+        destination.forceCancel()
+        cleanup(.upstreamTruncated)
     }
 
     private func sendHalfClose(to destination: NWConnection, flow: Flow, terminalError: Bool) {
@@ -784,14 +817,17 @@ private final class RelaySession {
         }
     }
 
-    /// One endpoint failing is not a reason to abort the other direction. Write-close it
-    /// first so the peer sees end-of-stream instead of an abort and keeps its in-flight
-    /// bytes; `cancel()` only drops sends whose completion has not fired yet.
+    /// Reached only when a receive returned an error with nothing left to hand over
+    /// and the direction never completed, so the stream is short. The drain that
+    /// precedes this still runs: a receive cannot be issued while a forward is in
+    /// flight, so by here everything we did receive has already been sent on. What
+    /// is left is only the question of which end-of-stream the peer is told about,
+    /// and a short stream must not be reported as a whole one.
     private func closeDirectionThenCleanup(to destination: NWConnection, flow: Flow) {
         assertQueue()
         guard !cleaned else { return }
         armCloseTimeout()
-        sendHalfClose(to: destination, flow: flow, terminalError: true)
+        finishDirection(to: destination, flow: flow, terminalError: true, truncated: true)
     }
 
     /// A failed state must never outrun an outstanding receive: that callback can still
