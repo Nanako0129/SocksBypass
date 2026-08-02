@@ -98,6 +98,7 @@
 		7F1F2720212A29D600540E3A /* SOCKS */ = {
 			isa = PBXGroup;
 			children = (
+				AC0000010000000000000005 /* Core */,
 				AC0000010000000000000001 /* Benchmark */,
 				AB0000010000000000000030 /* SocksBypassApp.swift */,
 				AB0000010000000000000031 /* ContentView.swift */,
@@ -113,14 +114,21 @@
 			isa = PBXGroup;
 			children = (
 				AB0000010000000000000001 /* BenchmarkRunner.swift */,
-				AB0000010000000000000002 /* Socks5HandshakeParser.swift */,
-				AB0000010000000000000003 /* NetworkTCPRelay.swift */,
-				AB0000010000000000000004 /* TrafficCounters.swift */,
-				AB0000010000000000000022 /* UdpAssociation.swift */,
 				AB0000010000000000000020 /* ProcessUsage.swift */,
 				AB0000010000000000000005 /* HevBridge.h */,
 			);
 			path = Benchmark;
+			sourceTree = "<group>";
+		};
+		AC0000010000000000000005 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				AB0000010000000000000002 /* Socks5HandshakeParser.swift */,
+				AB0000010000000000000003 /* NetworkTCPRelay.swift */,
+				AB0000010000000000000004 /* TrafficCounters.swift */,
+				AB0000010000000000000022 /* UdpAssociation.swift */,
+			);
+			path = Core;
 			sourceTree = "<group>";
 		};
 		AC0000010000000000000002 /* SocksBypassTests */ = {
