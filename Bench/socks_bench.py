@@ -507,6 +507,76 @@ def expect_request_rejection(proxy, request):
         sock.close()
 
 
+def check_udp_association(proxy, target_host):
+    """UDP ASSOCIATE, a datagram round trip, and teardown on control close.
+
+    The correctness gate feeds `all_modes_protocol_ok` into the branch selector,
+    so without this an engine whose UDP path is entirely broken could still be
+    reported protocol-correct and be selected for CONNECT/UDP parity it does not
+    have.
+    """
+    echo = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    echo.bind(("0.0.0.0", 0))
+    echo_port = echo.getsockname()[1]
+
+    def serve():
+        while True:
+            try:
+                data, peer = echo.recvfrom(65535)
+            except OSError:
+                return
+            echo.sendto(data, peer)
+
+    threading.Thread(target=serve, daemon=True).start()
+
+    payload = bytes(range(251))
+    packet = (b"\x00\x00\x00\x01" + socket.inet_aton(target_host)
+              + echo_port.to_bytes(2, "big") + payload)
+    control = socket.create_connection(proxy, timeout=20)
+    control.settimeout(20)
+    try:
+        control.sendall(b"\x05\x01\x00")
+        if recv_exact(control, 2) != b"\x05\x00":
+            raise ValueError("NO AUTH rejected for UDP ASSOCIATE")
+        control.sendall(b"\x05\x03\x00\x01" + b"\x00\x00\x00\x00" + b"\x00\x00")
+        reply = recv_exact(control, 10)
+        if reply[1] != 0x00:
+            raise ValueError("UDP ASSOCIATE rejected")
+        udp_port = int.from_bytes(reply[8:10], "big")
+
+        client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        client.settimeout(5)
+        try:
+            for _ in range(5):
+                client.sendto(packet, (proxy[0], udp_port))
+                try:
+                    data, _ = client.recvfrom(65535)
+                except socket.timeout:
+                    continue
+                if len(data) > 10 and data[10:] == payload:
+                    break
+            else:
+                raise ValueError("UDP round trip failed")
+        finally:
+            client.close()
+    finally:
+        control.close()
+
+    # Closing the control connection must release the association.
+    time.sleep(0.5)
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    probe.settimeout(1.5)
+    try:
+        probe.sendto(packet, (proxy[0], udp_port))
+        probe.recvfrom(65535)
+        raise ValueError("association survived control connection close")
+    except socket.timeout:
+        pass
+    finally:
+        probe.close()
+        echo.close()
+
+
 def run_correctness(proxy, target_host, target):
     checks = []
     for split in range(1, 3):
@@ -565,6 +635,9 @@ def run_correctness(proxy, target_host, target):
     expect_request_rejection(proxy, b"\x05\x01\x00\x02" + valid_address)
     checks.extend(("invalid_request_version", "invalid_rsv", "invalid_cmd", "invalid_atyp"))
 
+    check_udp_association(proxy, target_host)
+    checks.extend(("udp_associate", "udp_round_trip", "udp_teardown_on_control_close"))
+
     target.wait_results(13, 120)
     return {"workload": "correctness", "ok": True, "checks": checks}
 
@@ -598,6 +671,52 @@ def relay(client, target_host, target_port):
             target.close()
 
 
+def udp_associate(client):
+    """Minimum UDP ASSOCIATE for the reference proxy.
+
+    Exists so the correctness gate's UDP checks can run against this stand-in as
+    well as against a real relay; without it the gate could only be exercised on
+    a device. Same shape as the real one: no NAT table, the first well-formed
+    sender is the client, everything else is a peer reply.
+    """
+    relay_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    relay_socket.bind(("127.0.0.1", 0))
+    bound_port = relay_socket.getsockname()[1]
+    client_address = None
+
+    def pump():
+        nonlocal client_address
+        while True:
+            try:
+                data, source = relay_socket.recvfrom(65535)
+            except OSError:
+                return
+            if client_address is None and len(data) > 10 and data[:3] == b"\x00\x00\x00":
+                client_address = source
+            if source == client_address:
+                if len(data) < 11 or data[3] != 1:
+                    continue
+                host = socket.inet_ntoa(data[4:8])
+                port = int.from_bytes(data[8:10], "big")
+                relay_socket.sendto(data[10:], (host, port))
+            else:
+                header = (b"\x00\x00\x00\x01" + socket.inet_aton(source[0])
+                          + source[1].to_bytes(2, "big"))
+                relay_socket.sendto(header + data, client_address)
+
+    threading.Thread(target=pump, daemon=True).start()
+    client.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1")
+                   + bound_port.to_bytes(2, "big"))
+    try:
+        # The association lives exactly as long as its control connection.
+        while client.recv(1):
+            pass
+    except OSError:
+        pass
+    finally:
+        relay_socket.close()
+
+
 def local_socks(target_host, target_port):
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -620,10 +739,14 @@ def local_socks(target_host, target_port):
             reply = 0
             if version != 5 or reserved != 0:
                 reply = 1
-            elif command != 1:
+            elif command not in (1, 3):
                 reply = 7
             elif address_type != 1:
                 reply = 8
+            if not reply and command == 3:
+                recv_exact(client, 6)                    # declared client endpoint
+                udp_associate(client)
+                return
             if reply:
                 client.sendall(b"\x05" + bytes((reply,)) + b"\x00\x01" + b"\x00" * 6)
                 return

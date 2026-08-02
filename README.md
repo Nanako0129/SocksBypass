@@ -113,6 +113,10 @@ do not half-close mid-response and are not affected.
   [hev-socks5-server](https://github.com/heiher/hev-socks5-server) build, used
   only to compare engines. The shipping app does not include it. Licences for
   the vendored code are in `ThirdPartyNotices/`.
+- **The Benchmark configuration does not build on a clean checkout.** `Vendor/`
+  is gitignored and no XCFramework is committed, so run
+  `scripts/build-hev-xcframework.sh` first or the link step fails. Debug and
+  Release need nothing extra — they exclude the bridge entirely.
 
 ## License
 

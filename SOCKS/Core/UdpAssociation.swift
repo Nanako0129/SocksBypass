@@ -405,8 +405,19 @@ final class UdpAssociation {
                         self.pendingResolutions -= 1
                         let queued = self.pendingDatagrams.removeValue(forKey: key)
                         guard self.resolutions[key] != nil else { return }
-                        self.resolutions[key] = result.isEmpty ? .failed : .resolved(result)
-                        guard let queued, !result.isEmpty else { return }
+                        guard !result.isEmpty else {
+                            // A transient resolver failure must not black-hole the
+                            // name for the life of the association: an association
+                            // can stay open indefinitely, so a cached failure
+                            // outlives the outage that caused it. Dropping the
+                            // entry lets the next datagram retry, and the
+                            // concurrent-lookup cap still bounds the retries.
+                            self.resolutions.removeValue(forKey: key)
+                            self.resolutionOrder.removeAll { $0 == key }
+                            return
+                        }
+                        self.resolutions[key] = .resolved(result)
+                        guard let queued else { return }
                         for destination in result
                         where self.send(queued.payload, to: destination.withPort(queued.port),
                                         direction: .upload) {
