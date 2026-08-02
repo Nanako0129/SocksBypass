@@ -30,7 +30,7 @@ network can route traffic through it.
 ## Screenshot
 
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/03d37bb4-308c-46f6-b3cb-077372cb7643" alt="screenshot">
+    <img src="docs/screenshot.png" alt="screenshot" width="320">
 </p>
 
 ## Installation
@@ -159,7 +159,7 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 ## 截圖
 
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/03d37bb4-308c-46f6-b3cb-077372cb7643" alt="screenshot">
+    <img src="docs/screenshot.png" alt="screenshot" width="320">
 </p>
 
 ## 安裝說明
