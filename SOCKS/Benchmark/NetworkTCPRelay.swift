@@ -274,6 +274,10 @@ private final class RelaySession {
     private var downloadReceiveError = false
     private var downloadReceiveErrorCode = "none"
     private var downloadSawFIN = false
+    private var targetStateTrace: [String] = []
+    private var sessionStartedAt = Date()
+    private var lastDownloadByteAt: Date?
+    private var downloadIdleBeforeError = -1.0
 #endif
 
     init(
@@ -489,6 +493,7 @@ private final class RelaySession {
 
     private func handleTargetState(_ state: NWConnection.State) {
         assertQueue()
+        noteTargetState(state)
         guard !cleaned else { return }
 
         switch state {
@@ -608,13 +613,18 @@ private final class RelaySession {
         send(0)
     }
 
+    /// The handshake parser's limit bounds a protocol message; it has no business
+    /// bounding bulk payload. A cap is not an allocation, so raising it only means
+    /// fewer queue hops per megabyte and less kernel buffer left undrained.
+    private static let payloadReceiveBytes = 1024 * 1024
+
     private func receiveClientPayload() {
         assertQueue()
         guard active, !cleaned, !clientReadComplete, !clientReceivePending,
               !uploadSendPending else { return }
         clientReceivePending = true
 
-        client.receive(minimumIncompleteLength: 1, maximumLength: Socks5HandshakeParser.maximumFeedBytes) {
+        client.receive(minimumIncompleteLength: 1, maximumLength: Self.payloadReceiveBytes) {
             [weak self] data, _, isComplete, error in
             guard let self else { return }
             self.assertQueue()
@@ -643,7 +653,7 @@ private final class RelaySession {
               !downloadSendPending, let target else { return }
         targetReceivePending = true
 
-        target.receive(minimumIncompleteLength: 1, maximumLength: Socks5HandshakeParser.maximumFeedBytes) {
+        target.receive(minimumIncompleteLength: 1, maximumLength: Self.payloadReceiveBytes) {
             [weak self] data, _, isComplete, error in
             guard let self else { return }
             self.assertQueue()
@@ -856,9 +866,13 @@ private final class RelaySession {
             sessionUploadReceived += byteCount
         case .download:
             sessionDownloadReceived += byteCount
+            if byteCount > 0 { lastDownloadByteAt = Date() }
             if isComplete { downloadSawFIN = true }
             guard let error else { return }
             downloadReceiveError = true
+            // A multi-second gap means the connection sat idle and then died; a
+            // gap near zero means it was torn down mid-stream. Different causes.
+            downloadIdleBeforeError = Date().timeIntervalSince(lastDownloadByteAt ?? sessionStartedAt)
             if case .posix(let code) = error {
                 downloadReceiveErrorCode = String(describing: code)
             } else {
@@ -867,9 +881,36 @@ private final class RelaySession {
         }
     }
 
+    /// Which states the target connection passed through, and when. This is the
+    /// only way to tell a teardown we caused from one the stack handed us.
+    private func noteTargetState(_ state: NWConnection.State) {
+        guard targetStateTrace.count < 12 else { return }
+        let name: String
+        switch state {
+        case .setup: name = "setup"
+        case .preparing: name = "preparing"
+        case .ready: name = "ready"
+        case .cancelled: name = "cancelled"
+        case .waiting(let error): name = "waiting(\(Self.codeName(error)))"
+        case .failed(let error): name = "failed(\(Self.codeName(error)))"
+        @unknown default: name = "unknown"
+        }
+        targetStateTrace.append(
+            String(format: "%@@%.3f", name, Date().timeIntervalSince(sessionStartedAt))
+        )
+    }
+
+    private static func codeName(_ error: NWError) -> String {
+        if case .posix(let code) = error { return String(describing: code) }
+        return "nonPosix"
+    }
+
     private func diagnose(_ reason: CleanupReason) {
         let record: [String: Any] = [
             "relayClose": reason.rawValue,
+            "targetStates": targetStateTrace,
+            "downloadIdleBeforeError": downloadIdleBeforeError,
+            "sessionSeconds": Date().timeIntervalSince(sessionStartedAt),
             "uploadCommitted": sessionUpload,
             "downloadCommitted": sessionDownload,
             "uploadReceived": sessionUploadReceived,
@@ -888,6 +929,7 @@ private final class RelaySession {
 #else
     private func note(_ byteCount: Int, _ direction: TrafficCounters.Direction) {}
     private func noteReceived(_ byteCount: Int, _ flow: Flow, error: NWError?, isComplete: Bool) {}
+    private func noteTargetState(_ state: NWConnection.State) {}
     private func diagnose(_ reason: CleanupReason) {}
 #endif
 

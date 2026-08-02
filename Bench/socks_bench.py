@@ -18,6 +18,10 @@ CHUNK_SIZE = 64 * 1024
 _PATTERN_BASE = bytes((index * 31 + 17) & 0xFF for index in range(256))
 _CHUNK = _PATTERN_BASE * (CHUNK_SIZE // len(_PATTERN_BASE))
 SUSTAINED_MODES = ("upload", "download", "mixed")
+# Exact mode half-closes the client's write side once the upload is done. Set
+# False by --no-half-close to isolate whether that FIN is what lets the target
+# connection finish closing before the proxy has drained its receive buffer.
+HALF_CLOSE = True
 
 
 def pattern(offset, length):
@@ -237,7 +241,7 @@ class TargetServer:
                 socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 120)
             )
             upload = receive_evidence(connection, self.upload_bytes)
-            if upload["complete"] and connection.recv(1):
+            if upload["complete"] and HALF_CLOSE and connection.recv(1):
                 upload["complete"] = False
                 upload["failure_category"] = "unexpected_extra_data"
             download = send_evidence(connection, self.download_bytes)
@@ -245,7 +249,11 @@ class TargetServer:
                 connection.shutdown(socket.SHUT_WR)
             except OSError:
                 pass
+            # Decides which side aborted. ECONNRESET here means the phone reset the
+            # connection; 0 means this socket stayed healthy and whatever the relay
+            # failed to deliver was lost above the peer's kernel, not on the wire.
             return {
+                "so_error": connection.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR),
                 "upload_bytes": upload["observed_bytes"],
                 "download_bytes": download["observed_bytes"],
                 "upload_sha256": upload["sha256"],
@@ -342,11 +350,12 @@ def run_exact(proxy, target_host, target):
         sock.settimeout(180)
         try:
             upload = send_evidence(sock, target.upload_bytes)
-            try:
-                sock.shutdown(socket.SHUT_WR)
-            except OSError as error:
-                upload["complete"] = False
-                upload["failure_category"] = type(error).__name__
+            if HALF_CLOSE:
+                try:
+                    sock.shutdown(socket.SHUT_WR)
+                except OSError as error:
+                    upload["complete"] = False
+                    upload["failure_category"] = type(error).__name__
             download = receive_evidence(sock, target.download_bytes)
             return {
                 "ordinal": ordinal,
@@ -667,7 +676,13 @@ def main(argv=None):
     parser.add_argument("--seconds", type=float, default=45.0)
     parser.add_argument("--churn-count", type=int, default=500)
     parser.add_argument("--redact", action="store_true")
+    # Diagnostic: keeps the client's write side open through the download, so the
+    # relay never propagates a FIN and the target connection cannot complete its
+    # close while bytes are still buffered unread on the proxy.
+    parser.add_argument("--no-half-close", action="store_true")
     args = parser.parse_args(argv)
+    global HALF_CLOSE
+    HALF_CLOSE = not args.no_half_close
 
     try:
         exit_status = 0
