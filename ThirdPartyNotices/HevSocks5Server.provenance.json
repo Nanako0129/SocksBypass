@@ -1,0 +1,22 @@
+{
+  "artifact": {
+    "digestMethod": "SHA-256 of sorted relative-path file SHA-256 manifest",
+    "sha256": "3e4de90dc523c5a6f86ff8e35610c8ca32fde4a5a01e1e73c3dbd535241d530f",
+    "slices": [
+      {"platform": "iOS", "architectures": ["arm64"], "minimumOS": "17.0", "librarySHA256": "3a1495ec5a77f5b7357be0897c41ae3d749a26b67280e29bd8bb21f4ad06a6be"},
+      {"platform": "iOS Simulator", "architectures": ["arm64", "x86_64"], "minimumOS": "17.0", "librarySHA256": "23f1d68b40607dc18c4543ba5a9b035fe58a18111893d42398c479014d898e95"}
+    ]
+  },
+  "source": {
+    "hev-socks5-server": {"url": "https://github.com/heiher/hev-socks5-server.git", "tag": "2.12.0", "revision": "b6287389b426895e9791474ca02375f3e434bda2"},
+    "hev-task-system": {"revision": "8d83bbbf79557138726c8ee5a5fae99cbb978d61"},
+    "yaml": {"revision": "162227cd7d2b6108bc8bc133273e11413222ddf4"},
+    "hev-socks5-core": {"revision": "4be2e621813ba0315cfacd995bf501bde91d6996"}
+  },
+  "toolchain": {
+    "xcode": "Xcode 26.6;Build version 17F113",
+    "clang": "Apple clang version 21.0.0 (clang-2100.1.1.101)",
+    "iphoneOSSDK": "26.5",
+    "iPhoneSimulatorSDK": "26.5"
+  }
+}
