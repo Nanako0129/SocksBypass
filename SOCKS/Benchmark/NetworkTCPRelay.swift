@@ -259,6 +259,12 @@ private final class RelaySession {
     private var handshakeTimeout: DispatchWorkItem?
     private var clientReceivePending = false
     private var targetReceivePending = false
+    // A receive must never overtake the send carrying the previous payload. The
+    // normal path enforces that by only re-arming from the send completion, but
+    // the connection-state handlers drain directly; without this the overtaking
+    // receive can reach cleanup first and the queued payload dies unsent.
+    private var uploadSendPending = false
+    private var downloadSendPending = false
     private var gracefulCloseTimeout: DispatchWorkItem?
 #if RELAY_DIAGNOSTICS
     private var sessionUpload = 0
@@ -604,7 +610,8 @@ private final class RelaySession {
 
     private func receiveClientPayload() {
         assertQueue()
-        guard active, !cleaned, !clientReadComplete, !clientReceivePending else { return }
+        guard active, !cleaned, !clientReadComplete, !clientReceivePending,
+              !uploadSendPending else { return }
         clientReceivePending = true
 
         client.receive(minimumIncompleteLength: 1, maximumLength: Socks5HandshakeParser.maximumFeedBytes) {
@@ -632,7 +639,8 @@ private final class RelaySession {
 
     private func receiveTargetPayload() {
         assertQueue()
-        guard active, !cleaned, !targetReadComplete, !targetReceivePending, let target else { return }
+        guard active, !cleaned, !targetReadComplete, !targetReceivePending,
+              !downloadSendPending, let target else { return }
         targetReceivePending = true
 
         target.receive(minimumIncompleteLength: 1, maximumLength: Socks5HandshakeParser.maximumFeedBytes) {
@@ -685,6 +693,7 @@ private final class RelaySession {
             return
         }
 
+        setSendPending(flow, true)
         destination.send(
             content: data,
             contentContext: .defaultMessage,
@@ -694,6 +703,7 @@ private final class RelaySession {
                 self.assertQueue()
                 guard !self.cleaned else { return }
                 guard error == nil else {
+                    self.setSendPending(flow, false)
                     self.cleanup(.forwardSendError)
                     return
                 }
@@ -701,16 +711,29 @@ private final class RelaySession {
                 self.counters.recordCommitted(data.count, direction: direction)
                 self.note(data.count, direction)
                 if complete {
+                    // Stays pending: the half-close is the same direction's send.
                     self.sendHalfClose(to: destination, flow: flow, terminalError: terminalError)
                 } else {
+                    self.setSendPending(flow, false)
                     self.receiveNextPayload(for: flow)
                 }
             }
         )
     }
 
+    private func setSendPending(_ flow: Flow, _ pending: Bool) {
+        assertQueue()
+        switch flow {
+        case .upload:
+            uploadSendPending = pending
+        case .download:
+            downloadSendPending = pending
+        }
+    }
+
     private func sendHalfClose(to destination: NWConnection, flow: Flow, terminalError: Bool) {
         assertQueue()
+        setSendPending(flow, true)
         destination.send(
             content: nil,
             contentContext: .finalMessage,
@@ -719,6 +742,7 @@ private final class RelaySession {
                 guard let self else { return }
                 self.assertQueue()
                 guard !self.cleaned else { return }
+                self.setSendPending(flow, false)
                 guard error == nil else {
                     self.cleanup(.halfCloseSendError)
                     return

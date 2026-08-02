@@ -209,10 +209,14 @@ class TargetServer:
                 "download_bytes": 0,
             }
         finally:
+            # How long close() lingered is the evidence that separates "the relay
+            # dropped bytes" from "the linger deadline expired and the kernel RST".
+            closing = time.monotonic()
             try:
                 connection.close()
             except OSError:
                 pass
+            result["close_seconds"] = round(time.monotonic() - closing, 3)
         with self.condition:
             self.results.append(result)
             self.condition.notify_all()
@@ -223,8 +227,14 @@ class TargetServer:
             # sendall() only means the bytes are buffered locally. Linger so close()
             # waits for delivery instead of discarding the send buffer. Must be set
             # before shutdown(); macOS rejects it afterwards with EINVAL.
+            #
+            # The timeout is generous on purpose: on expiry the kernel sends RST and
+            # discards whatever is still in flight, which looks exactly like a proxy
+            # truncating the stream. Four concurrent verified sessions can starve one
+            # reader for seconds, so a short linger turns harness backpressure into a
+            # fake relay defect. Stays inside the 180s client/result deadlines.
             connection.setsockopt(
-                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 10)
+                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 120)
             )
             upload = receive_evidence(connection, self.upload_bytes)
             if upload["complete"] and connection.recv(1):
