@@ -246,6 +246,7 @@ final class BackgroundKeepAlive {
     private let player = AVAudioPlayerNode()
     private let silence: AVAudioPCMBuffer?
     private var wanted = false
+    private var interruptionObserver: NSObjectProtocol?
 
     var isActive: Bool { engine.isRunning && player.isPlaying }
 
@@ -264,13 +265,36 @@ final class BackgroundKeepAlive {
     func start() {
         guard !wanted else { return }
         wanted = true
+        observeInterruptions()
         resumeIfNeeded()
+    }
+
+    /// The one-second poll cannot recover an interruption on its own. Losing the
+    /// audio session is precisely what lets iOS suspend the app, and a suspended
+    /// app's run-loop timer stops firing, so polling is dead exactly when it
+    /// would be needed. This notification still arrives; the timer stays as a
+    /// foreground backstop.
+    private func observeInterruptions() {
+        guard interruptionObserver == nil else { return }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] note in
+            guard let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+            Task { @MainActor in self?.resumeIfNeeded() }
+        }
     }
 
     /// Releases the session for good. `wanted` is cleared first so the periodic
     /// resume does not immediately restart what this just stopped.
     func stop() {
         wanted = false
+        if let interruptionObserver {
+            NotificationCenter.default.removeObserver(interruptionObserver)
+            self.interruptionObserver = nil
+        }
         player.stop()
         engine.stop()
         try? AVAudioSession.sharedInstance().setActive(false)

@@ -451,22 +451,21 @@ private final class RelaySession {
         }
     }
 
-    /// The endpoint a UDP ASSOCIATE request says the client will send from, or
-    /// nil when nothing usable was declared. A port with an unspecified address
-    /// is the common case for a client behind NAT, and the control connection
-    /// already tells us the host, so the two are combined rather than thrown
-    /// away — a port-only declaration still narrows who can claim the
-    /// association. A domain name needs no test here because it fails to parse
-    /// as a numeric address and falls back to discovery on its own.
+    /// The endpoint a UDP ASSOCIATE request says the client will send from.
+    ///
+    /// Only the port is taken from the request. The host always comes from the
+    /// control connection, because a declared host is attacker-controlled input:
+    /// naming a third party made it the association's client, so datagrams from
+    /// the real sender were classified as peer traffic and wrapped and forwarded
+    /// to that third party — an open reflector. Nothing about a declared host is
+    /// verifiable, and the peer of the TCP connection is, so the declaration
+    /// contributes only the port it can legitimately narrow.
     private static func declaredUdpEndpoint(
         _ request: Socks5HandshakeParser.Request,
         controlPeer: String?
     ) -> (address: String, port: UInt16)? {
-        guard request.target.port != 0 else { return nil }
-        let address = request.target.address
-        let unspecified = address.allSatisfy { $0 == "0" || $0 == "." || $0 == ":" }
-        guard let host = unspecified ? controlPeer : address else { return nil }
-        return (host, request.target.port)
+        guard request.target.port != 0, let controlPeer else { return nil }
+        return (controlPeer, request.target.port)
     }
 
     private func receiveUdpControl() {

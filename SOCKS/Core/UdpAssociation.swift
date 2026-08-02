@@ -193,6 +193,8 @@ final class UdpAssociation {
     /// Insertion order, so the cache can be evicted without a second index.
     private var resolutionOrder: [String] = []
     private var pendingResolutions = 0
+    /// At most one datagram per in-flight lookup, replayed once it resolves.
+    private var pendingDatagrams: [String: (payload: Data, port: UInt16)] = [:]
     // The proxy answers without authentication and the control connection can be
     // held open indefinitely, so a client can stream unique hostnames faster than
     // a serial resolver drains them. Both the cache and the number of lookups in
@@ -388,6 +390,12 @@ final class UdpAssociation {
                 pendingResolutions += 1
                 resolutions[key] = .pending
                 resolutionOrder.append(key)
+                // The datagram that triggered the lookup used to be dropped, so
+                // every unseen domain silently lost its first packet: one-shot
+                // protocols failed outright and DNS ate a timeout before a retry
+                // could use the cache. One datagram is held per in-flight lookup,
+                // which the concurrent-lookup cap already bounds.
+                pendingDatagrams[key] = (decoded.payload, decoded.header.port)
                 evictResolutions()
                 let host = decoded.header.address
                 resolutionQueue.async { [weak self] in
@@ -395,8 +403,15 @@ final class UdpAssociation {
                     self?.queue.async { [weak self] in
                         guard let self, !self.closed else { return }
                         self.pendingResolutions -= 1
+                        let queued = self.pendingDatagrams.removeValue(forKey: key)
                         guard self.resolutions[key] != nil else { return }
                         self.resolutions[key] = result.isEmpty ? .failed : .resolved(result)
+                        guard let queued, !result.isEmpty else { return }
+                        for destination in result
+                        where self.send(queued.payload, to: destination.withPort(queued.port),
+                                        direction: .upload) {
+                            break
+                        }
                     }
                 }
             }
