@@ -25,12 +25,14 @@ class MainActivity : ComponentActivity() {
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { /* optional; service still starts */ }
+    ) { granted ->
+        viewModel.setNotificationsAllowed(granted)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        maybeRequestNotificationPermission()
+        refreshNotificationPermission(requestIfMissing = true)
         setContent {
             SocksTheme {
                 Box(
@@ -46,19 +48,33 @@ class MainActivity : ComponentActivity() {
                         onStart = viewModel::startProxy,
                         onStop = viewModel::stopProxy,
                         onOpenSettings = viewModel::openNetworkSettings,
+                        onRequestNotifications = {
+                            refreshNotificationPermission(requestIfMissing = true)
+                        },
+                        onOpenNotificationSettings = viewModel::openNotificationSettings,
                     )
                 }
             }
         }
     }
 
-    private fun maybeRequestNotificationPermission() {
-        if (Build.VERSION.SDK_INT < 33) return
+    override fun onResume() {
+        super.onResume()
+        // Re-check after user returns from Settings; do not re-spam the dialog.
+        refreshNotificationPermission(requestIfMissing = false)
+    }
+
+    private fun refreshNotificationPermission(requestIfMissing: Boolean) {
+        if (Build.VERSION.SDK_INT < 33) {
+            viewModel.setNotificationsAllowed(true)
+            return
+        }
         val granted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
-        if (!granted) {
+        viewModel.setNotificationsAllowed(granted)
+        if (!granted && requestIfMissing) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }

@@ -21,6 +21,8 @@ data class ScreenState(
     val endpoints: List<LocalEndpointScanner.Endpoint> = emptyList(),
     val selectedAddress: String? = null,
     val port: Int = ProxyForegroundService.DEFAULT_PORT,
+    /** API 33+: false until POST_NOTIFICATIONS granted (required for visible FGS). */
+    val notificationsAllowed: Boolean = true,
 )
 
 class ProxyViewModel(app: Application) : AndroidViewModel(app) {
@@ -82,9 +84,15 @@ class ProxyViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun setNotificationsAllowed(allowed: Boolean) {
+        _state.update { it.copy(notificationsAllowed = allowed) }
+    }
+
     fun startProxy() {
-        val addr = _state.value.selectedAddress ?: return
-        val port = _state.value.port
+        val s = _state.value
+        if (!s.notificationsAllowed) return
+        val addr = s.selectedAddress ?: return
+        val port = s.port
         ProxyForegroundService.start(getApplication(), addr, port)
     }
 
@@ -95,6 +103,15 @@ class ProxyViewModel(app: Application) : AndroidViewModel(app) {
     fun openNetworkSettings() {
         val intent = Intent(Settings.ACTION_WIRELESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         getApplication<Application>().startActivity(intent)
+    }
+
+    fun openNotificationSettings() {
+        val app = getApplication<Application>()
+        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, app.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        app.startActivity(intent)
     }
 
     override fun onCleared() {

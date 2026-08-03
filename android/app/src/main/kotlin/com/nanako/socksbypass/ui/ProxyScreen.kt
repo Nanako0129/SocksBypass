@@ -2,8 +2,13 @@ package com.nanako.socksbypass.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,17 +38,22 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -62,6 +72,8 @@ fun ProxyScreen(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onOpenSettings: () -> Unit,
+    onRequestNotifications: () -> Unit = {},
+    onOpenNotificationSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val proxy = state.proxy
@@ -134,6 +146,55 @@ fun ProxyScreen(
             )
         }
 
+        HowToUseCard()
+
+        if (!state.notificationsAllowed) {
+            Surface(
+                color = SocksColors.Amber.copy(alpha = 0.15f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, SocksColors.Amber),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.notifications_required_title),
+                        color = SocksColors.Amber,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = stringResource(R.string.notifications_required_body),
+                        color = SocksColors.TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = onRequestNotifications,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                            border = BorderStroke(1.dp, SocksColors.Border),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = SocksColors.TextPrimary,
+                            ),
+                        ) {
+                            Text(stringResource(R.string.notifications_retry))
+                        }
+                        OutlinedButton(
+                            onClick = onOpenNotificationSettings,
+                            modifier = Modifier.heightIn(min = 48.dp),
+                            border = BorderStroke(1.dp, SocksColors.Border),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = SocksColors.TextPrimary,
+                            ),
+                        ) {
+                            Text(stringResource(R.string.notifications_open_settings))
+                        }
+                    }
+                }
+            }
+        }
+
         // Endpoint card
         SectionCard(title = "PROXY") {
             Text(
@@ -177,7 +238,9 @@ fun ProxyScreen(
                 }
                 Button(
                     onClick = if (running) onStop else onStart,
-                    enabled = running || state.selectedAddress != null,
+                    enabled = running || (
+                        state.selectedAddress != null && state.notificationsAllowed
+                        ),
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = 48.dp),
@@ -309,6 +372,112 @@ fun ProxyScreen(
         }
 
         Spacer(Modifier.height(12.dp))
+    }
+}
+
+/**
+ * Collapsible setup steps (ui-ux-pro-max: skippable help, 48dp touch, high contrast OLED).
+ * Default expanded so first-run users see the path; state survives rotation.
+ */
+@Composable
+private fun HowToUseCard() {
+    var expanded by rememberSaveable { mutableStateOf(true) }
+    val steps = stringArrayResource(R.array.how_to_use_steps)
+    val a11y = if (expanded) {
+        stringResource(R.string.how_to_use_a11y_expand)
+    } else {
+        stringResource(R.string.how_to_use_a11y_collapse)
+    }
+
+    Surface(
+        color = SocksColors.Surface,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, SocksColors.Border),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = a11y
+                        stateDescription = if (expanded) "Expanded" else "Collapsed"
+                    },
+            ) {
+                Text(
+                    text = stringResource(R.string.how_to_use_title).uppercase(Locale.US),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = SocksColors.TextMuted,
+                )
+                Text(
+                    text = stringResource(
+                        if (expanded) R.string.how_to_use_hide else R.string.how_to_use_show,
+                    ),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = SocksColors.Accent,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+
+            AnimatedVisibility(
+                visible = expanded,
+                enter = fadeIn(tween(200)) + expandVertically(tween(200)),
+                exit = fadeOut(tween(150)) + shrinkVertically(tween(150)),
+            ) {
+                Column(
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    HorizontalDivider(color = SocksColors.Border.copy(alpha = 0.6f))
+                    steps.forEachIndexed { index, step ->
+                        HowToUseStep(number = index + 1, text = step)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HowToUseStep(number: Int, text: String) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(SocksColors.AccentDim)
+                .border(1.dp, SocksColors.Accent.copy(alpha = 0.45f), CircleShape),
+        ) {
+            Text(
+                text = number.toString(),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = SocksColors.Accent,
+            )
+        }
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                color = SocksColors.TextSecondary,
+                lineHeight = 20.sp,
+                fontSize = 14.sp,
+            ),
+            modifier = Modifier
+                .weight(1f)
+                .padding(top = 3.dp),
+        )
     }
 }
 
