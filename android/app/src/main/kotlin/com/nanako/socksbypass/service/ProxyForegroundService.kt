@@ -75,6 +75,20 @@ class ProxyForegroundService : Service() {
             counters = counters,
             eventHandler = { event ->
                 val line = describe(event)
+                if (event is RelayEvent.ListenerFailed) {
+                    // Must fully tear down — UI-only STOPPED left sessions/FGS alive
+                    // (open-relay after hotspot/interface drop). See dual-review C1.
+                    instanceState.updateAndGet { state ->
+                        state.copy(
+                            status = ProxyStatus.Stopped,
+                            activity = (listOf(line) + state.activity).take(50),
+                        )
+                    }
+                    notifyListeners()
+                    stopProxy()
+                    stopSelf()
+                    return@Socks5Server
+                }
                 instanceState.updateAndGet { state ->
                     val log = (listOf(line) + state.activity).take(50)
                     when (event) {
@@ -82,10 +96,6 @@ class ProxyForegroundService : Service() {
                         is RelayEvent.ConnectRejected -> state.copy(activity = log)
                         is RelayEvent.UdpAssociated -> state.copy(activity = log)
                         is RelayEvent.UdpAssociateFailed -> state.copy(activity = log)
-                        is RelayEvent.ListenerFailed -> state.copy(
-                            status = ProxyStatus.Stopped,
-                            activity = log,
-                        )
                         else -> state.copy(activity = log)
                     }
                 }

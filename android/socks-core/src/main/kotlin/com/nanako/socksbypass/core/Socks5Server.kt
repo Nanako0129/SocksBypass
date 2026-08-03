@@ -47,11 +47,25 @@ class Socks5Server(
         synchronized(lifecycle) {
             check(state == State.Stopped) { "already running" }
             require(bindHost.isNotBlank()) { "bindHost required" }
+            val addr = InetAddress.getByName(bindHost)
+            // Never silently open on all interfaces / non-private targets.
+            require(!addr.isAnyLocalAddress) {
+                "bindHost must not be 0.0.0.0 / :: (select a private hotspot address)"
+            }
+            require(!addr.isLoopbackAddress || bindHost == "127.0.0.1" || bindHost == "::1") {
+                "unexpected loopback bind"
+            }
+            // Production path: private IPv4 only (tests may use 127.0.0.1).
+            if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
+                val host = addr.hostAddress ?: bindHost
+                require(isPrivateIpv4(host)) {
+                    "bindHost must be a private IPv4 address, got $host"
+                }
+            }
             state = State.Starting
             val ss = ServerSocket()
             try {
                 ss.reuseAddress = true
-                val addr = InetAddress.getByName(bindHost)
                 ss.bind(InetSocketAddress(addr, port))
             } catch (e: Exception) {
                 state = State.Stopped
@@ -162,5 +176,20 @@ class Socks5Server(
             }
         }
         leftover.forEach { it.cancel() }
+    }
+
+    companion object {
+        fun isPrivateIpv4(host: String): Boolean {
+            val parts = host.split('.')
+            if (parts.size != 4) return false
+            val o = parts.mapNotNull { it.toIntOrNull() }
+            if (o.size != 4 || o.any { it !in 0..255 }) return false
+            return when {
+                o[0] == 10 -> true
+                o[0] == 172 && o[1] in 16..31 -> true
+                o[0] == 192 && o[1] == 168 -> true
+                else -> false
+            }
+        }
     }
 }

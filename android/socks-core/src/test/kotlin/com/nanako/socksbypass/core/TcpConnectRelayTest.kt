@@ -15,6 +15,15 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 class TcpConnectRelayTest {
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectBindOnAnyLocalAddress() {
+        Socks5Server(
+            bindHost = "0.0.0.0",
+            port = 0,
+            upstream = DefaultJvmUpstreamNetwork(),
+        ).start()
+    }
+
     @Test
     fun connectRefusedPortReturnsNonSuccessRep() {
         val upstream = TrackingUpstreamNetwork(DefaultJvmUpstreamNetwork())

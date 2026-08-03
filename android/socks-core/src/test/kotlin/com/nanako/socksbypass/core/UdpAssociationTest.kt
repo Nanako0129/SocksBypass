@@ -100,6 +100,71 @@ class UdpAssociationTest {
     }
 
     @Test
+    fun upstreamDatagramFromNonAllowlistedSourceIsDropped() {
+        // Anti-reflector: only endpoints we previously contacted may send back.
+        var upstreamSock: DatagramSocket? = null
+        val upstream = object : UpstreamNetwork {
+            override val isAvailable: Boolean = true
+            override fun resolve(host: String) = listOf(InetAddress.getByName(host))
+            override fun createTcpSocket() = Socket()
+            override fun createUdpSocket(): DatagramSocket =
+                DatagramSocket().also { upstreamSock = it }
+        }
+        val echo = DatagramSocket(0)
+        val echoPort = echo.localPort
+        val association = UdpAssociation(
+            controlPeer = InetAddress.getByName("127.0.0.1"),
+            declaredClientPort = null,
+            lanBindAddress = InetAddress.getByName("127.0.0.1"),
+            upstream = upstream,
+            counters = TrafficCounters(),
+        )
+        association.start()
+        try {
+            val client = DatagramSocket()
+            client.soTimeout = 500
+            // Contact echo so it enters the allowlist.
+            val request = UdpAssociation.DatagramHeader.encode(
+                UdpAssociation.DatagramHeader.AddressType.Ipv4,
+                "127.0.0.1",
+                echoPort,
+                byteArrayOf(1, 2, 3),
+            )!!
+            client.send(
+                DatagramPacket(request, request.size, InetSocketAddress("127.0.0.1", association.localPort)),
+            )
+            echo.soTimeout = 2_000
+            echo.receive(DatagramPacket(ByteArray(64), 64))
+            Thread.sleep(100)
+
+            // Spoof: send to the cellular-side socket from a never-contacted source.
+            val up = upstreamSock
+            assertNotNull(up)
+            val spoof = DatagramSocket()
+            val spoofPayload = byteArrayOf(0xDE.toByte(), 0xAD.toByte())
+            spoof.send(
+                DatagramPacket(
+                    spoofPayload,
+                    spoofPayload.size,
+                    InetSocketAddress("127.0.0.1", up!!.localPort),
+                ),
+            )
+            try {
+                val buf = ByteArray(512)
+                client.receive(DatagramPacket(buf, buf.size))
+                assertTrue("non-allowlisted upstream must not reach client", false)
+            } catch (_: Exception) {
+                // expected timeout
+            }
+            spoof.close()
+            client.close()
+        } finally {
+            association.close()
+            echo.close()
+        }
+    }
+
+    @Test
     fun onlyControlPeerCanClaimAssociation() {
         val echo = DatagramSocket(0)
         val echoPort = echo.localPort
