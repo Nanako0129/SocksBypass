@@ -51,7 +51,7 @@ class ProxyForegroundService : Service() {
         promoteForeground(starting = true, endpoint = null)
         instanceState.set(
             ProxyUiState(
-                status = ProxyStatus.Listening,
+                status = ProxyStatus.Starting,
                 bindHost = host,
                 port = port,
                 activity = listOf("starting…"),
@@ -235,6 +235,7 @@ class ProxyForegroundService : Service() {
             instanceState.updateAndGet { state ->
                 val status = when {
                     state.status == ProxyStatus.Stopped -> ProxyStatus.Stopped
+                    state.status == ProxyStatus.Starting -> ProxyStatus.Starting
                     cellular != null && !cellular.isAvailable -> ProxyStatus.CellularUnavailable
                     else -> ProxyStatus.Listening
                 }
@@ -290,6 +291,7 @@ class ProxyForegroundService : Service() {
 
 enum class ProxyStatus {
     Stopped,
+    Starting,
     Listening,
     CellularUnavailable,
 }

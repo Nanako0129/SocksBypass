@@ -19,6 +19,11 @@ object NotificationFactory {
     fun ensureChannel(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        // Drop pre-v2 LOW channel so upgraded installs do not keep a silent dead entry.
+        try {
+            manager.deleteNotificationChannel("socks_proxy")
+        } catch (_: Exception) {
+        }
         val channel = NotificationChannel(
             CHANNEL_ID,
             context.getString(R.string.notification_channel_name),

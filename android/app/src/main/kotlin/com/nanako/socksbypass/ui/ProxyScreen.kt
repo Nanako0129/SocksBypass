@@ -79,11 +79,13 @@ fun ProxyScreen(
     val proxy = state.proxy
     val statusText = when (proxy.status) {
         ProxyStatus.Listening -> "LISTENING"
+        ProxyStatus.Starting -> "STARTING"
         ProxyStatus.Stopped -> "STOPPED"
         ProxyStatus.CellularUnavailable -> "CELLULAR UNAVAILABLE"
     }
     val statusColor = when (proxy.status) {
         ProxyStatus.Listening -> SocksColors.Accent
+        ProxyStatus.Starting -> SocksColors.Amber
         ProxyStatus.Stopped -> SocksColors.Stopped
         ProxyStatus.CellularUnavailable -> SocksColors.Amber
     }
@@ -97,7 +99,9 @@ fun ProxyScreen(
     val upstream = proxy.upstreamLabel.ifBlank {
         if (proxy.cellularAvailable) "CELLULAR" else "CELLULAR UNAVAILABLE"
     }
-    val running = proxy.status != ProxyStatus.Stopped
+    val running = proxy.status == ProxyStatus.Listening ||
+        proxy.status == ProxyStatus.Starting ||
+        proxy.status == ProxyStatus.CellularUnavailable
 
     Column(
         modifier = Modifier

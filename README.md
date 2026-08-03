@@ -353,6 +353,8 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 ## 背景運作
 
+### 僅 iOS
+
 切換到其他 app 或鎖屏之後，代理仍會繼續服務。做法是持續持有一個播放靜音的音訊
 工作階段，這也是它宣告 `audio` 背景模式的原因。
 
@@ -368,6 +370,12 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 主畫面會顯示保活是否真的生效。如果顯示 `FOREGROUND ONLY`，代表 app 一離開畫面就
 會停止服務。
+
+### Android
+
+Android 使用使用者啟動的**前景服務**（`connectedDevice`）與**持續通知**（含 Stop）。
+Android 13+ 請允許通知權限後再 Start；詳見
+[docs/android/device-verification.md](docs/android/device-verification.md)。
 
 ## 已知限制
 
