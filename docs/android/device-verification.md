@@ -113,3 +113,25 @@ After UI **Start** (uiautomator tap):
 - `ProxyForegroundService` `isForeground=true` `foregroundId=42` `types=0x10` (connectedDevice)
 
 UI showed `CELLULAR UNAVAILABLE` on this capture (no usable cellular INTERNET at sample time) — FGS notification still posted correctly.
+
+## Positive cellular upstream E2E (2026-08-03, Fold7 dual-network)
+
+**Device:** SM-F9660 (Galaxy Z Fold7) · serial `RFCY71L70JZ` · SHA `ec50780` lineage
+
+**Setup (simultaneous):**
+- Wi‑Fi STA: SSID `iml1swifi`, `wlan0` = `192.168.1.176` (home LAN IPv6 prefix `2001:b011:9:15a7::/64`)
+- Cellular INTERNET: `rmnet_data0` with link-local public IPv6
+  `2001:b400:e2a3:6e8e:9938:465:d640:bd39/64` (from `dumpsys connectivity`)
+- Hotspot listen: `172.29.237.186` (`ap_br_swlan0`)
+- SocksBypass FGS LISTENING on `172.29.237.186:9876`; app holds
+  `NetworkRequest` TRANSPORT_CELLULAR (request id 7956)
+
+**Client (Mac on phone hotspot):**
+```bash
+curl -x socks5h://172.29.237.186:9876 https://ifconfig.me
+# → 2001:b400:e2a3:6e8e:9938:465:d640:bd39
+```
+
+**Verdict: PASS** — SOCKS egress IPv6 equals the phone’s **cellular** interface
+address, not the home Wi‑Fi prefix (`2001:b011:…`). Dual-network positive path
+proven: default Wi‑Fi present, proxy still exits via 4G/5G.
