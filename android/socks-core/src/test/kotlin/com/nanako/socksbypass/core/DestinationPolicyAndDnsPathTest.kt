@@ -156,6 +156,19 @@ class DestinationPolicyAndDnsPathTest {
         assertTrue(DestinationPolicy.ALLOW_ALL.isAllowed(InetAddress.getByName("127.0.0.1")))
     }
 
+    @Test
+    fun productionPolicyRejectsRfc1918CgnatAndUla() {
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("10.0.0.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("192.168.1.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("172.16.0.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("100.64.0.1")))
+        // IPv6 ULA
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("fd12:3456:789a::1")))
+        assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("1.1.1.1")))
+        // Lab harness still allows private
+        assertTrue(DestinationPolicy.ALLOW_ALL.isAllowed(InetAddress.getByName("10.0.0.1")))
+    }
+
     private fun readExact(input: InputStream, n: Int): ByteArray {
         val out = ByteArray(n)
         var off = 0

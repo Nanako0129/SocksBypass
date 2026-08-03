@@ -144,9 +144,16 @@ class TcpRelaySession(
         }
         val bound = boundEndpoint(socket)
         writeAll(listOf(Socks5HandshakeParser.requestReply(0x00, bound)))
-        // CONNECT-only metric (matches iOS activeTCP).
-        if (tcpCounted.compareAndSet(false, true)) {
-            counters.sessionOpened(id)
+        // CONNECT-only metric (matches iOS activeTCP). Must be cancel-safe: if
+        // stop()/cleanup raced after the success reply, do not leave a stale
+        // activeTcp entry for the next proxy start (Codex P2).
+        if (!registerTcpCounter()) {
+            try {
+                socket.close()
+            } catch (_: Exception) {
+            }
+            target = null
+            return
         }
         emit(RelayEvent.ConnectEstablished)
         client.soTimeout = soTimeoutMs
@@ -157,6 +164,22 @@ class TcpRelaySession(
             counters.recordCommitted(request.firstPayload.size, TrafficCounters.Direction.Upload)
         }
         pumpBidirectional(client, socket)
+    }
+
+    /**
+     * @return false if the session was already cleaned — caller must not pump.
+     */
+    private fun registerTcpCounter(): Boolean {
+        if (cleaned.get()) return false
+        if (!tcpCounted.compareAndSet(false, true)) return !cleaned.get()
+        counters.sessionOpened(id)
+        if (cleaned.get()) {
+            // cleanup() already ran without seeing tcpCounted; undo the late open.
+            counters.sessionClosed(id)
+            tcpCounted.set(false)
+            return false
+        }
+        return true
     }
 
     private fun handleUdp(request: Socks5HandshakeParser.Request) {

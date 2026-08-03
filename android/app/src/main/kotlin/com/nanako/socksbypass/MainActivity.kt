@@ -16,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
+import com.nanako.socksbypass.service.NotificationFactory
 import com.nanako.socksbypass.ui.ProxyScreen
 import com.nanako.socksbypass.ui.ProxyViewModel
 import com.nanako.socksbypass.ui.theme.SocksTheme
@@ -25,8 +26,9 @@ class MainActivity : ComponentActivity() {
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        viewModel.setNotificationsAllowed(granted)
+    ) {
+        // Re-evaluate full visibility (permission + channel + app toggle).
+        viewModel.setNotificationsAllowed(NotificationFactory.areNotificationsVisiblyEnabled(this))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -65,15 +67,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshNotificationPermission(requestIfMissing: Boolean) {
-        if (Build.VERSION.SDK_INT < 33) {
-            viewModel.setNotificationsAllowed(true)
-            return
-        }
+        val visible = NotificationFactory.areNotificationsVisiblyEnabled(this)
+        viewModel.setNotificationsAllowed(visible)
+        if (Build.VERSION.SDK_INT < 33) return
         val granted = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
-        viewModel.setNotificationsAllowed(granted)
         if (!granted && requestIfMissing) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }

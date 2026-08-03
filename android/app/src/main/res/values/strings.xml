@@ -10,7 +10,7 @@
     <string name="notification_stop">Stop</string>
     <string name="exposure_warning">There is no password. Anyone who can reach the selected address and port can use this phone as an open relay. Enable personal hotspot first, bind only that private IP, and stop when finished.</string>
     <string name="notifications_required_title">Notifications required</string>
-    <string name="notifications_required_body">Android needs an ongoing notification while the proxy runs. Allow notifications, then tap Start again.</string>
+    <string name="notifications_required_body">Android needs a visible ongoing notification while the proxy runs. Allow notifications (and do not disable the SOCKS proxy channel), then tap Start again.</string>
     <string name="notifications_open_settings">Notification settings</string>
     <string name="notifications_retry">Allow notifications</string>
     <string name="how_to_use_title">How to use</string>

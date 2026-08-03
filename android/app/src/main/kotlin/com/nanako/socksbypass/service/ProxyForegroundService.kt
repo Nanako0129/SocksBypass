@@ -47,6 +47,22 @@ class ProxyForegroundService : Service() {
     private fun startProxy(host: String, port: Int) {
         if (server != null) return
 
+        // Refuse silent FGS if the user disabled the notification channel/app toggle
+        // while leaving POST_NOTIFICATIONS granted (Codex P1).
+        if (!NotificationFactory.areNotificationsVisiblyEnabled(this)) {
+            instanceState.set(
+                ProxyUiState(
+                    status = ProxyStatus.Stopped,
+                    bindHost = host,
+                    port = port,
+                    activity = listOf("notifications disabled — enable channel then Start"),
+                ),
+            )
+            notifyListeners()
+            stopSelf()
+            return
+        }
+
         // Promote to foreground *before* any work that can throw (5s FGS deadline).
         promoteForeground(starting = true, endpoint = null)
         instanceState.set(

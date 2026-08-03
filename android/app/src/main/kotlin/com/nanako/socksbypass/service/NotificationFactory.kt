@@ -35,6 +35,29 @@ object NotificationFactory {
         manager.createNotificationChannel(channel)
     }
 
+    /**
+     * True only when the user can actually see FGS shade notifications:
+     * runtime permission (API 33+), app notifications enabled, and channel not
+     * set to IMPORTANCE_NONE. Call after [ensureChannel] so the channel exists.
+     */
+    fun areNotificationsVisiblyEnabled(context: Context): Boolean {
+        ensureChannel(context)
+        if (Build.VERSION.SDK_INT >= 33) {
+            val granted = context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            if (!granted) return false
+        }
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            if (!manager.areNotificationsEnabled()) return false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = manager.getNotificationChannel(CHANNEL_ID) ?: return true
+            if (channel.importance == NotificationManager.IMPORTANCE_NONE) return false
+        }
+        return true
+    }
+
     fun build(
         context: Context,
         endpoint: String?,
