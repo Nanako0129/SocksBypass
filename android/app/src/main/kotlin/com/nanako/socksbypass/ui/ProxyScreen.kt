@@ -267,7 +267,7 @@ fun ProxyScreen(
         SectionCard(title = "LISTEN ADDRESS") {
             if (state.endpoints.isEmpty()) {
                 Text(
-                    text = "No private interface found. Enable personal hotspot, then refresh.",
+                    text = "No hotspot/tether address found. Enable Personal Hotspot (or USB tethering), then Refresh. Station Wi‑Fi alone is not offered for bind.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = SocksColors.Amber,
                 )

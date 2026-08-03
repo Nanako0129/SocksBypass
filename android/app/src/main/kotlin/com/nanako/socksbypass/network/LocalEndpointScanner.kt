@@ -12,9 +12,14 @@ import java.net.NetworkInterface
  * Enumerate private IPv4 addresses suitable for a hotspot / LAN listener.
  * Does not auto-start tethering. Avoids loopback, VPN, and common cellular ifaces.
  *
- * Product rule (upstream review): the proxy is meant for the phone's **personal
- * hotspot**, not café/home STA Wi‑Fi. When SoftAP is off we do not offer station
- * wlan addresses for bind — empty list → UI asks the user to enable hotspot.
+ * Product rule: the proxy is for the phone's **own** tether (Wi‑Fi SoftAP / USB /
+ * BT pan), not café/home STA Wi‑Fi. Interface **names alone are never trusted**
+ * without a tethering signal (SoftAP reflection, LOCAL_NETWORK wifi, or an
+ * active rndis/bt-pan address). Empty list → UI asks to enable hotspot.
+ *
+ * Chipsets that put SoftAP on `wlan0`: when SoftAP is enabled and no dedicated
+ * `ap*`/`swlan*` name exists, we return all private candidates so the user can
+ * still bind.
  */
 object LocalEndpointScanner {
     data class Endpoint(
@@ -26,7 +31,7 @@ object LocalEndpointScanner {
 
     /**
      * Scan private IPv4 listen candidates. When [context] is provided, filters
-     * using SoftAP / LOCAL_NETWORK signals so café `wlan0` is not auto-offered.
+     * using SoftAP / LOCAL_NETWORK / USB-tether signals.
      */
     fun scanPrivateIpv4(context: Context? = null): List<Endpoint> {
         val raw = scanAllPrivateIpv4()
@@ -86,32 +91,42 @@ object LocalEndpointScanner {
     }
 
     /**
-     * Prefer SoftAP interfaces when present; if SoftAP appears enabled but names
-     * are opaque (some chipsets use wlan0 for AP), keep all private candidates.
-     * If SoftAP is off, return **empty** so UI does not bind café STA Wi‑Fi.
+     * Require an actual tethering signal before any candidate is offered.
+     * Name heuristics only **rank** within an already-confirmed tether session.
      */
     fun filterForListen(context: Context, all: List<Endpoint>): List<Endpoint> {
         if (all.isEmpty()) return emptyList()
-        val apLike = all.filter { it.hotspotLike }
-        if (apLike.isNotEmpty()) return apLike
-        return if (isSoftApEnabled(context) || hasLocalNetworkWifi(context)) {
-            all
-        } else {
-            emptyList()
+        if (!isTetheringActive(context, all)) {
+            return emptyList()
+        }
+        val preferred = all.filter { it.hotspotLike }
+        // SoftAP on opaque wlan0: no dedicated name → offer all private ifaces.
+        return if (preferred.isNotEmpty()) preferred else all
+    }
+
+    /**
+     * SoftAP (reflection), LOCAL_NETWORK Wi‑Fi capability, or USB/BT tether iface up.
+     */
+    fun isTetheringActive(context: Context, endpoints: List<Endpoint> = emptyList()): Boolean {
+        if (isSoftApEnabled(context)) return true
+        if (hasLocalNetworkWifi(context)) return true
+        // USB / BT tether: interface presence is the signal (not café STA names).
+        val list = endpoints.ifEmpty { scanAllPrivateIpv4() }
+        return list.any {
+            val n = it.interfaceName.lowercase()
+            n.startsWith("rndis") || n.startsWith("bt-pan") || n.contains("usb")
         }
     }
 
     fun isSoftApEnabled(context: Context): Boolean {
         val app = context.applicationContext
         val wifi = app.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return false
-        // Public API removed; reflection still works on current Samsung builds.
         try {
-            @Suppress("UNCHECKED_CAST")
             val m = wifi.javaClass.getMethod("isWifiApEnabled")
             if (m.invoke(wifi) as Boolean) return true
         } catch (_: Exception) {
         }
-        return hasLocalNetworkWifi(app)
+        return false
     }
 
     private fun hasLocalNetworkWifi(context: Context): Boolean {
@@ -123,7 +138,6 @@ object LocalEndpointScanner {
             cm.allNetworks.any { network ->
                 val caps = cm.getNetworkCapabilities(network) ?: return@any false
                 if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return@any false
-                // SoftAP / local-only networks often advertise LOCAL_NETWORK.
                 if (Build.VERSION.SDK_INT >= 30) {
                     caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_LOCAL_NETWORK)
                 } else {
@@ -135,13 +149,15 @@ object LocalEndpointScanner {
         }
     }
 
+    /**
+     * Ranking only — never sufficient alone to expose an address for bind.
+     */
     fun isHotspotLikeName(name: String): Boolean {
         val n = name.lowercase()
         return n.startsWith("ap") ||
             n.contains("swlan") ||
             n.contains("softap") ||
-            n.contains("wlan1") || // common second radio AP
-            n.startsWith("rndis") || // USB tethering
+            n.startsWith("rndis") ||
             n.startsWith("bt-pan")
     }
 
