@@ -794,10 +794,23 @@ def self_test():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="SOCKS5 host oracle; normal modes require an external proxy")
+    parser = argparse.ArgumentParser(
+        description=(
+            "SOCKS5 host oracle; normal modes require an external proxy. "
+            "Works for both iOS and Android: pass the phone listen IP/port "
+            "(Android: hotspot IP after Start, e.g. 192.168.43.1:9876)."
+        )
+    )
     parser.add_argument("--mode", choices=("self-test", "correctness", "exact", "churn", *SUSTAINED_MODES), default="self-test")
-    parser.add_argument("--proxy-host")
-    parser.add_argument("--proxy-port", type=int)
+    parser.add_argument(
+        "--proxy-host",
+        help="SOCKS5 proxy host (iPhone Wi-Fi/hotspot IP or Android hotspot IP)",
+    )
+    parser.add_argument(
+        "--proxy-port",
+        type=int,
+        help="SOCKS5 proxy port (default app port is 9876)",
+    )
     parser.add_argument("--target-bind", default="0.0.0.0")
     parser.add_argument("--target-host")
     parser.add_argument("--seconds", type=float, default=45.0)

@@ -1,7 +1,14 @@
-# iOS SOCKS5 Server
+# SocksBypass
 
-A SOCKS5 proxy server that runs on your iPhone, so other devices on the same
-network can route traffic through it.
+A SOCKS5 proxy server that runs on your **iPhone** or **Android** phone so other
+devices on the same network can route traffic through it.
+
+| Platform | Stack | Upstream path |
+| -------- | ----- | ------------- |
+| iOS | Swift + Network.framework | Device default route (as today) |
+| Android | Kotlin + Jetpack Compose + Java sockets | Every outbound socket bound to **cellular** |
+
+The Android tree lives under `android/` and does not touch the Xcode project.
 
 ## Why this exists
 
@@ -41,8 +48,16 @@ network you do not control.
 
 ## Requirements
 
+### iOS
+
 - iOS 17.0 or later
 - Xcode with a signing account (a free Apple ID works)
+
+### Android
+
+- Android 8.0+ (API 26); app targets API 36
+- Android Studio or command-line SDK 36 + JDK 17
+- A phone with **mobile data** and the ability to open a **personal hotspot**
 
 ## Screenshot
 
@@ -52,10 +67,13 @@ network you do not control.
 
 ## Installation
 
-1. Clone the project:
+1. Clone the project (or a fork):
 ```bash
 git clone https://github.com/Nanako0129/SocksBypass.git
+# or: git clone https://github.com/ImL1s/SocksBypass.git
 ```
+
+### iOS
 
 2. Open the Xcode project:
 - Open `SocksBypass.xcodeproj`
@@ -67,7 +85,26 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 - Select it in Xcode
 - Run
 
+### Android
+
+2. Open the Gradle project:
+```bash
+cd android
+# optional: echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
+./gradlew :app:assembleDebug
+```
+
+3. Install on a device:
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Or open the `android/` folder in Android Studio, run on a physical device
+(emulator has no real cellular for the fail-closed upstream path).
+
 ## Usage
+
+### iOS
 
 1. Launch the app
 2. Wait for the IP address and port to appear (default port 9876)
@@ -78,6 +115,50 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 For USB instead of Wi-Fi, use [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios)
 forward mode: `ios forward 1080 9876`, then point the client at `127.0.0.1`.
+
+### Android (cellular-bound proxy)
+
+Android is designed for this flow:
+
+```text
+computer  --Wi-Fi-->  phone hotspot :9876  --SOCKS5-->  phone app
+                                              |
+                                              v
+                                    each Socket bound to CELLULAR
+                                              |
+                                              v
+                                           4G / 5G
+```
+
+1. On the phone, open **Settings → Hotspot / tethering** and enable the personal
+   hotspot. The app does **not** start tethering for you (no privileged APIs).
+2. Launch SocksBypass. Grant notification permission if asked (foreground service).
+3. Tap **Refresh addresses** and select the hotspot private IP (e.g.
+   `192.168.43.1`). The app never defaults to `0.0.0.0`.
+4. Tap **Start**. Status should read `LISTENING`. Upstream should show
+   `CELLULAR · …`. If mobile data is off, status becomes `CELLULAR UNAVAILABLE`
+   and new CONNECT sessions are **rejected** (no silent Wi-Fi fallback).
+5. On the computer (joined to the phone hotspot), configure SOCKS5:
+   - Host: the selected listen IP
+   - Port: `9876` (unless you changed it)
+   - Authentication: none
+
+Black-box checks from a machine that can reach the phone:
+
+```bash
+# Target server must be reachable via the phone's cellular path.
+python3 Bench/socks_bench.py \
+  --mode correctness \
+  --proxy-host 192.168.43.1 \
+  --proxy-port 9876 \
+  --target-host <echo-or-lab-host-on-internet>
+```
+
+Unit tests for the pure SOCKS core (no device required):
+
+```bash
+cd android && ./gradlew :socks-core:test
+```
 
 ## Running in the background
 
