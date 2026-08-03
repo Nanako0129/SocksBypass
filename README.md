@@ -293,6 +293,12 @@ phone hotspot before Start (station Wi‑Fi alone is not offered for bind).
   is gitignored and no XCFramework is committed, so run
   `scripts/build-hev-xcframework.sh` first or the link step fails. Debug and
   Release need nothing extra — they exclude the bridge entirely.
+- **Engine / binary PRs:** shipping iOS stays on the native Swift SOCKS core;
+  Android on the Kotlin path under `android/`. PRs that swap the production
+  engine for a vendored binary need a short design note, a **reproducible**
+  build from source (or a documented rebuild script + pinned upstream), and
+  must keep alternate engines out of the default app target unless explicitly
+  opted in — Benchmark/hev is the existing comparison path.
 
 ## License
 
@@ -446,6 +452,10 @@ relay 不會把這種情況當成成功——被截斷的串流會以 reset 中�
 - `Benchmark` 建置組態會連結一份 vendored 的
   [hev-socks5-server](https://github.com/heiher/hev-socks5-server)，僅用於引擎
   比較，正式 app 不包含它。vendored 程式碼的授權條款放在 `ThirdPartyNotices/`。
+- **引擎 / 預編譯 binary PR：** 正式 iOS 維持 Swift SOCKS 核心，Android 維持
+  `android/` Kotlin 路徑。若要以 vendored binary 替換 production 引擎，需附簡短
+  設計說明、**可重現**的原始碼建置（或文件化 rebuild script + 鎖定上游），且預設
+  不要掛進 shipping target（比較引擎請走既有 Benchmark/hev 路徑）。
 
 ## 授權
 
