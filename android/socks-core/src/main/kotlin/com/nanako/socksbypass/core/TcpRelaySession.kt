@@ -14,6 +14,9 @@ import kotlin.concurrent.thread
 /**
  * One accepted client TCP connection: SOCKS handshake + CONNECT bidirectional relay
  * with proper half-close, or UDP ASSOCIATE lifecycle ownership.
+ *
+ * [TrafficCounters.activeTcp] counts CONNECT relays only (iOS parity), not control
+ * sockets that later become UDP ASSOCIATE.
  */
 class TcpRelaySession(
     private val client: Socket,
@@ -28,7 +31,8 @@ class TcpRelaySession(
         controlPeer: InetAddress,
         declared: Socks5HandshakeParser.Target,
         localBind: InetAddress?,
-    ) -> UdpAssociation? = { peer, declared, local ->
+        onFailure: () -> Unit,
+    ) -> UdpAssociation? = { peer, declared, local, onFail ->
         UdpAssociation(
             controlPeer = peer,
             declaredClientPort = declared.port.takeIf { it != 0 },
@@ -36,18 +40,28 @@ class TcpRelaySession(
             upstream = upstream,
             counters = counters,
             destinationPolicy = destinationPolicy,
+            onFailure = onFail,
         )
     },
 ) {
     val id: UUID = UUID.randomUUID()
     private val cleaned = AtomicBoolean(false)
+    private val started = AtomicBoolean(false)
     private var target: Socket? = null
     private var udp: UdpAssociation? = null
     private val clientIn: InputStream = client.getInputStream()
     private val clientOut: OutputStream = client.getOutputStream()
+    /** True only after CONNECT success reply; gates activeTcp counter. */
+    private val tcpCounted = AtomicBoolean(false)
 
+    /**
+     * Begin the session worker. Idempotent: cancel-before-start or double-start
+     * does not open counters or emit SessionOpened.
+     */
     fun start() {
-        counters.sessionOpened(id)
+        if (cleaned.get()) return
+        if (!started.compareAndSet(false, true)) return
+        if (cleaned.get()) return
         emit(RelayEvent.SessionOpened)
         thread(name = "socks-session-$id", isDaemon = true) {
             try {
@@ -130,6 +144,10 @@ class TcpRelaySession(
         }
         val bound = boundEndpoint(socket)
         writeAll(listOf(Socks5HandshakeParser.requestReply(0x00, bound)))
+        // CONNECT-only metric (matches iOS activeTCP).
+        if (tcpCounted.compareAndSet(false, true)) {
+            counters.sessionOpened(id)
+        }
         emit(RelayEvent.ConnectEstablished)
         client.soTimeout = soTimeoutMs
         socket.soTimeout = soTimeoutMs
@@ -160,7 +178,13 @@ class TcpRelaySession(
             null
         }
         val association = try {
-            udpFactory(peer, request.target, local)
+            udpFactory(peer, request.target, local) {
+                // Cellular/socket death: drop control TCP so the session cleans up.
+                try {
+                    client.close()
+                } catch (_: Exception) {
+                }
+            }
         } catch (_: Exception) {
             null
         }
@@ -392,8 +416,13 @@ class TcpRelaySession(
             client.close()
         } catch (_: Exception) {
         }
-        counters.sessionClosed(id)
-        emit(RelayEvent.SessionClosed)
+        if (tcpCounted.get()) {
+            counters.sessionClosed(id)
+        }
+        // Only emit closed if we actually started (avoid cancel-before-start noise).
+        if (started.get()) {
+            emit(RelayEvent.SessionClosed)
+        }
         onClosed(id)
     }
 }

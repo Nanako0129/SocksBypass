@@ -7,8 +7,12 @@ import java.net.InetSocketAddress
 import java.net.SocketTimeoutException
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+import java.util.concurrent.ThreadFactory
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 
 /**
@@ -25,8 +29,10 @@ class UdpAssociation(
     private val lanBindAddress: InetAddress?,
     private val upstream: UpstreamNetwork,
     private val counters: TrafficCounters,
-    private val soTimeoutMs: Int = 500,
+    /** 0 = block until packet or socket close (preferred); >0 polls with timeout. */
+    private val soTimeoutMs: Int = 0,
     private val destinationPolicy: DestinationPolicy = DestinationPolicy.PRODUCTION,
+    private val onFailure: () -> Unit = {},
 ) {
     private val closed = AtomicBoolean(false)
     private val lanSocket: DatagramSocket
@@ -36,12 +42,22 @@ class UdpAssociation(
     @Volatile
     private var clientEndpoint: InetSocketAddress? = null
 
-    private enum class Resolution { Pending, Failed }
-    private val resolutions = ConcurrentHashMap<String, Any>() // Resolved list or Pending/Failed
+    private val resolutionLock = Any()
+    private val resolutions = HashMap<String, ResolutionState>()
     private val resolutionOrder = ArrayList<String>()
     private val pendingResolutions = AtomicInteger(0)
-    /** Bounded queue of datagrams waiting on in-flight DNS (per host). */
-    private val pendingDatagrams = ConcurrentHashMap<String, ArrayDeque<Pair<ByteArray, Int>>>()
+    private val pendingBytes = AtomicLong(0)
+
+    private sealed interface ResolutionState {
+        class Pending(
+            val queue: ArrayDeque<PendingDatagram> = ArrayDeque(),
+        ) : ResolutionState
+
+        class Resolved(val addresses: List<InetAddress>) : ResolutionState
+        data object Failed : ResolutionState
+    }
+
+    private data class PendingDatagram(val payload: ByteArray, val port: Int, val bytes: Int)
 
     val localPort: Int
 
@@ -91,6 +107,13 @@ class UdpAssociation(
 
     fun close() {
         if (!closed.compareAndSet(false, true)) return
+        closeSockets()
+        releaseAllPendingBytes()
+    }
+
+    val isClosed: Boolean get() = closed.get()
+
+    private fun closeSockets() {
         try {
             lanSocket.close()
         } catch (_: Exception) {
@@ -101,7 +124,16 @@ class UdpAssociation(
         }
     }
 
-    val isClosed: Boolean get() = closed.get()
+    /** Unexpected receive-loop death (cellular disconnect, socket error). */
+    private fun failClosed() {
+        if (!closed.compareAndSet(false, true)) return
+        closeSockets()
+        releaseAllPendingBytes()
+        try {
+            onFailure()
+        } catch (_: Exception) {
+        }
+    }
 
     private fun lanLoop() {
         val buf = ByteArray(65_535)
@@ -112,8 +144,10 @@ class UdpAssociation(
             } catch (_: SocketTimeoutException) {
                 continue
             } catch (_: Exception) {
-                if (!closed.get()) break
-                break
+                if (!closed.get()) {
+                    failClosed()
+                }
+                return
             }
             val from = packet.socketAddress as? InetSocketAddress ?: continue
             val data = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
@@ -130,7 +164,10 @@ class UdpAssociation(
             } catch (_: SocketTimeoutException) {
                 continue
             } catch (_: Exception) {
-                break
+                if (!closed.get()) {
+                    failClosed()
+                }
+                return
             }
             val from = packet.socketAddress as? InetSocketAddress ?: continue
             val key = endpointKey(from)
@@ -153,7 +190,7 @@ class UdpAssociation(
                 lanSocket.send(DatagramPacket(wrapped, wrapped.size, client))
                 counters.recordCommitted(payload.size, TrafficCounters.Direction.Download)
             } catch (_: Exception) {
-                // ignore
+                // ignore send errors; socket death handled on next receive
             }
         }
     }
@@ -181,65 +218,134 @@ class UdpAssociation(
             }
             DatagramHeader.AddressType.Domain -> {
                 val key = decoded.header.address.lowercase()
-                when (val state = resolutions[key]) {
-                    is List<*> -> {
-                        @Suppress("UNCHECKED_CAST")
-                        val addrs = state as List<InetAddress>
-                        for (addr in addrs) {
-                            if (!destinationPolicy.isAllowed(addr)) continue
-                            if (sendUpstream(decoded.payload, InetSocketAddress(addr, decoded.header.port))) break
+                val host = decoded.header.address
+                val startDns: Boolean
+                val resolvedSnapshot: List<InetAddress>?
+                synchronized(resolutionLock) {
+                    when (val state = resolutions[key]) {
+                        is ResolutionState.Resolved -> {
+                            startDns = false
+                            resolvedSnapshot = state.addresses
+                        }
+                        is ResolutionState.Failed -> {
+                            startDns = false
+                            resolvedSnapshot = null
+                        }
+                        is ResolutionState.Pending -> {
+                            enqueuePendingLocked(state, decoded.payload, decoded.header.port)
+                            startDns = false
+                            resolvedSnapshot = null
+                        }
+                        null -> {
+                            if (pendingResolutions.get() >= PENDING_RESOLUTION_LIMIT) {
+                                startDns = false
+                                resolvedSnapshot = null
+                            } else {
+                                val pending = ResolutionState.Pending()
+                                resolutions[key] = pending
+                                resolutionOrder.add(key)
+                                pendingResolutions.incrementAndGet()
+                                enqueuePendingLocked(pending, decoded.payload, decoded.header.port)
+                                evictResolutionsLocked()
+                                startDns = true
+                                resolvedSnapshot = null
+                            }
                         }
                     }
-                    Resolution.Pending -> {
-                        enqueuePending(key, decoded.payload, decoded.header.port)
+                }
+                if (resolvedSnapshot != null) {
+                    for (addr in resolvedSnapshot) {
+                        if (!destinationPolicy.isAllowed(addr)) continue
+                        if (sendUpstream(decoded.payload, InetSocketAddress(addr, decoded.header.port))) break
                     }
-                    Resolution.Failed -> return
-                    null -> {
-                        if (pendingResolutions.get() >= PENDING_RESOLUTION_LIMIT) return
-                        pendingResolutions.incrementAndGet()
-                        resolutions[key] = Resolution.Pending
-                        synchronized(resolutionOrder) { resolutionOrder.add(key) }
-                        enqueuePending(key, decoded.payload, decoded.header.port)
-                        evictResolutions()
-                        val host = decoded.header.address
-                        thread(name = "socks-udp-dns", isDaemon = true) {
-                            val result = try {
-                                if (!upstream.isAvailable) emptyList()
-                                else upstream.resolve(host)
-                            } catch (_: Exception) {
-                                emptyList()
-                            }
-                            if (closed.get()) return@thread
-                            pendingResolutions.decrementAndGet()
-                            val queued = pendingDatagrams.remove(key)
-                            if (result.isEmpty()) {
-                                resolutions.remove(key)
-                                synchronized(resolutionOrder) { resolutionOrder.remove(key) }
-                                return@thread
-                            }
-                            resolutions[key] = result
-                            if (queued != null) {
-                                for ((payload, port) in queued) {
-                                    for (addr in result) {
-                                        if (!destinationPolicy.isAllowed(addr)) continue
-                                        if (sendUpstream(payload, InetSocketAddress(addr, port))) break
-                                    }
-                                }
-                            }
-                        }
+                    return
+                }
+                if (startDns) {
+                    dnsExecutor.execute {
+                        completeDns(key, host)
                     }
                 }
             }
         }
     }
 
-    private fun enqueuePending(key: String, payload: ByteArray, port: Int) {
-        val queue = pendingDatagrams.getOrPut(key) { ArrayDeque() }
-        synchronized(queue) {
-            if (queue.size >= PENDING_DATAGRAMS_PER_HOST) {
-                queue.removeFirst()
+    private fun completeDns(key: String, host: String) {
+        val result = try {
+            if (!upstream.isAvailable) emptyList()
+            else upstream.resolve(host)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        if (closed.get()) {
+            pendingResolutions.decrementAndGet()
+            return
+        }
+        val toFlush: List<PendingDatagram>
+        val addresses: List<InetAddress>
+        synchronized(resolutionLock) {
+            pendingResolutions.decrementAndGet()
+            val current = resolutions[key]
+            if (current !is ResolutionState.Pending) {
+                return
             }
-            queue.addLast(payload to port)
+            if (result.isEmpty()) {
+                toFlush = current.queue.toList()
+                current.queue.clear()
+                resolutions.remove(key)
+                resolutionOrder.remove(key)
+                addresses = emptyList()
+            } else {
+                toFlush = current.queue.toList()
+                current.queue.clear()
+                resolutions[key] = ResolutionState.Resolved(result)
+                addresses = result
+            }
+            for (item in toFlush) {
+                pendingBytes.addAndGet(-item.bytes.toLong())
+                globalPendingBytes.addAndGet(-item.bytes.toLong())
+            }
+        }
+        if (addresses.isEmpty()) return
+        for (item in toFlush) {
+            for (addr in addresses) {
+                if (!destinationPolicy.isAllowed(addr)) continue
+                if (sendUpstream(item.payload, InetSocketAddress(addr, item.port))) break
+            }
+        }
+    }
+
+    private fun enqueuePendingLocked(
+        pending: ResolutionState.Pending,
+        payload: ByteArray,
+        port: Int,
+    ) {
+        val bytes = payload.size
+        // Drop if association or global budget exceeded.
+        if (pendingBytes.get() + bytes > PENDING_BYTES_PER_ASSOCIATION) return
+        if (globalPendingBytes.get() + bytes > PENDING_BYTES_GLOBAL) return
+        while (pending.queue.size >= PENDING_DATAGRAMS_PER_HOST && pending.queue.isNotEmpty()) {
+            val old = pending.queue.removeFirst()
+            pendingBytes.addAndGet(-old.bytes.toLong())
+            globalPendingBytes.addAndGet(-old.bytes.toLong())
+        }
+        pending.queue.addLast(PendingDatagram(payload, port, bytes))
+        pendingBytes.addAndGet(bytes.toLong())
+        globalPendingBytes.addAndGet(bytes.toLong())
+    }
+
+    private fun releaseAllPendingBytes() {
+        synchronized(resolutionLock) {
+            for ((_, state) in resolutions) {
+                if (state is ResolutionState.Pending) {
+                    for (item in state.queue) {
+                        pendingBytes.addAndGet(-item.bytes.toLong())
+                        globalPendingBytes.addAndGet(-item.bytes.toLong())
+                    }
+                    state.queue.clear()
+                }
+            }
+            resolutions.clear()
+            resolutionOrder.clear()
         }
     }
 
@@ -276,18 +382,16 @@ class UdpAssociation(
     private fun endpointKey(addr: InetSocketAddress): String =
         "${addr.address.hostAddress}:${addr.port}"
 
-    private fun evictResolutions() {
-        synchronized(resolutionOrder) {
-            var index = 0
-            while (resolutions.size > RESOLUTION_CACHE_LIMIT && index < resolutionOrder.size) {
-                val key = resolutionOrder[index]
-                if (resolutions[key] == Resolution.Pending) {
-                    index++
-                    continue
-                }
-                resolutions.remove(key)
-                resolutionOrder.removeAt(index)
+    private fun evictResolutionsLocked() {
+        var index = 0
+        while (resolutions.size > RESOLUTION_CACHE_LIMIT && index < resolutionOrder.size) {
+            val key = resolutionOrder[index]
+            if (resolutions[key] is ResolutionState.Pending) {
+                index++
+                continue
             }
+            resolutions.remove(key)
+            resolutionOrder.removeAt(index)
         }
     }
 
@@ -380,6 +484,18 @@ class UdpAssociation(
         const val RESOLUTION_CACHE_LIMIT = 256
         const val PENDING_RESOLUTION_LIMIT = 8
         const val PENDING_DATAGRAMS_PER_HOST = 8
+        const val PENDING_BYTES_PER_ASSOCIATION = 512 * 1024
+        const val PENDING_BYTES_GLOBAL = 8 * 1024 * 1024
         const val ALLOWED_UPSTREAM_LIMIT = 256
+
+        private val globalPendingBytes = AtomicLong(0)
+
+        private val dnsThreadFactory = ThreadFactory { r ->
+            Thread(r, "socks-udp-dns").apply { isDaemon = true }
+        }
+
+        /** Shared DNS pool — avoids unbounded per-datagram threads. */
+        internal val dnsExecutor: ExecutorService =
+            Executors.newFixedThreadPool(4, dnsThreadFactory)
     }
 }

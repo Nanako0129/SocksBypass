@@ -58,16 +58,18 @@ object StrictIpLiteral {
     }
 
     private fun expandIpv6(input: String): ByteArray? {
+        // Rewrite dotted IPv4 tail into two hextets *before* :: expansion so forms
+        // like ::192.0.2.1 and 2001:db8::192.0.2.1 keep a valid compression marker.
         var host = input
-        var v4Bytes: ByteArray? = null
         val lastColon = host.lastIndexOf(':')
         if (lastColon >= 0 && host.indexOf('.', startIndex = lastColon) >= 0) {
             val v4 = host.substring(lastColon + 1)
             val a = parseIpv4(v4) ?: return null
-            v4Bytes = a.address
-            host = host.substring(0, lastColon + 1) // keep trailing colon for empty hextet handling
-            // strip trailing colon so split works: "....:ffff:" + remove → better rebuild
-            host = input.substring(0, lastColon)
+            val b = a.address
+            val h1 = ((b[0].toInt() and 0xff) shl 8) or (b[1].toInt() and 0xff)
+            val h2 = ((b[2].toInt() and 0xff) shl 8) or (b[3].toInt() and 0xff)
+            host = host.substring(0, lastColon + 1) +
+                Integer.toHexString(h1) + ":" + Integer.toHexString(h2)
         }
 
         val doubleIdx = host.indexOf("::")
@@ -91,24 +93,18 @@ object StrictIpLiteral {
             val right = host.substring(doubleIdx + 2)
             val head = splitHextets(left) ?: return null
             val tail = splitHextets(right) ?: return null
-            val v4Slots = if (v4Bytes != null) 2 else 0
-            val used = head.size + tail.size + v4Slots
-            if (used > 8) return null
+            val used = head.size + tail.size
+            // :: must compress at least one hextet (reject zero-width compression).
+            if (used >= 8) return null
             hextets.addAll(head)
             repeat(8 - used) { hextets.add(0) }
             hextets.addAll(tail)
         } else {
             val all = splitHextets(host) ?: return null
-            val v4Slots = if (v4Bytes != null) 2 else 0
-            if (all.size + v4Slots != 8) return null
+            if (all.size != 8) return null
             hextets.addAll(all)
         }
 
-        if (v4Bytes != null) {
-            if (hextets.size != 6) return null
-            hextets.add(((v4Bytes[0].toInt() and 0xff) shl 8) or (v4Bytes[1].toInt() and 0xff))
-            hextets.add(((v4Bytes[2].toInt() and 0xff) shl 8) or (v4Bytes[3].toInt() and 0xff))
-        }
         if (hextets.size != 8) return null
 
         val out = ByteArray(16)

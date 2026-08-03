@@ -244,6 +244,84 @@ class TcpConnectRelayTest {
         }
     }
 
+    @Test
+    fun rapidStopStartKeepsFinalListenerAccepting() {
+        val upstream = DefaultJvmUpstreamNetwork()
+        val server = Socks5Server(
+            bindHost = "127.0.0.1",
+            port = 0,
+            upstream = upstream,
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
+        )
+        // Stress the generation-token path (GPT 5.6 Pro P1).
+        var listenPort = 0
+        repeat(200) {
+            listenPort = server.start()
+            server.stop()
+        }
+        listenPort = server.start()
+        try {
+            Socket("127.0.0.1", listenPort).use { client ->
+                client.soTimeout = 5_000
+                client.getOutputStream().write(byteArrayOf(0x05, 0x01, 0x00))
+                client.getOutputStream().flush()
+                val method = readExact(client.getInputStream(), 2)
+                assertArrayEquals(byteArrayOf(0x05, 0x00), method)
+            }
+        } finally {
+            server.stop()
+        }
+    }
+
+    @Test
+    fun connectOnlyIncrementsActiveTcpNotUdpHandshake() {
+        val free = ServerSocket(0)
+        val targetPort = free.localPort
+        thread(isDaemon = true) {
+            free.accept().use { s ->
+                s.getInputStream().read()
+            }
+        }
+        val counters = TrafficCounters()
+        val server = Socks5Server(
+            bindHost = "127.0.0.1",
+            port = 0,
+            upstream = DefaultJvmUpstreamNetwork(),
+            counters = counters,
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
+        )
+        val listenPort = server.start()
+        try {
+            Socket("127.0.0.1", listenPort).use { client ->
+                client.soTimeout = 5_000
+                client.getOutputStream().write(byteArrayOf(0x05, 0x01, 0x00))
+                client.getOutputStream().flush()
+                readExact(client.getInputStream(), 2)
+                val req = byteArrayOf(
+                    0x05, 0x01, 0x00, 0x01,
+                    127, 0, 0, 1,
+                    (targetPort shr 8).toByte(), (targetPort and 0xFF).toByte(),
+                )
+                client.getOutputStream().write(req)
+                client.getOutputStream().flush()
+                val rep = readExact(client.getInputStream(), 10)
+                assertEquals(0, rep[1].toInt() and 0xFF)
+                // Wait for CONNECT counter
+                var tcp = 0
+                repeat(50) {
+                    tcp = counters.snapshot().activeTcp
+                    if (tcp == 1) return@repeat
+                    Thread.sleep(20)
+                }
+                assertEquals(1, tcp)
+                assertEquals(0, counters.snapshot().activeUdp)
+            }
+        } finally {
+            server.stop()
+            free.close()
+        }
+    }
+
     private fun readExact(input: InputStream, n: Int): ByteArray {
         val out = ByteArray(n)
         var off = 0

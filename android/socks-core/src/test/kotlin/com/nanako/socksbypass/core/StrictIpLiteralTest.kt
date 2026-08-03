@@ -44,4 +44,36 @@ class StrictIpLiteralTest {
         assertNotNull(a)
         assertEquals(16, a!!.address.size)
     }
+
+    @Test
+    fun parsesIpv4CompatibleIpv6() {
+        val a = StrictIpLiteral.parse("::192.0.2.1")
+        assertNotNull(a)
+        assertEquals(16, a!!.address.size)
+        // Last 4 bytes are 192.0.2.1
+        assertEquals(192, a.address[12].toInt() and 0xff)
+        assertEquals(0, a.address[13].toInt() and 0xff)
+        assertEquals(2, a.address[14].toInt() and 0xff)
+        assertEquals(1, a.address[15].toInt() and 0xff)
+    }
+
+    @Test
+    fun parsesCompressedIpv6WithDottedTail() {
+        val a = StrictIpLiteral.parse("2001:db8::192.0.2.1")
+        assertNotNull(a)
+        assertEquals(16, a!!.address.size)
+        assertEquals(192, a.address[12].toInt() and 0xff)
+        assertEquals(1, a.address[15].toInt() and 0xff)
+    }
+
+    @Test
+    fun rejectsZeroWidthDoubleColon() {
+        assertNull(StrictIpLiteral.parse("1:2:3:4:5:6:7:8::"))
+        assertNull(StrictIpLiteral.parse("::1:2:3:4:5:6:7:8"))
+    }
+
+    @Test
+    fun rejectsMultipleDoubleColon() {
+        assertNull(StrictIpLiteral.parse("1::2::3"))
+    }
 }
