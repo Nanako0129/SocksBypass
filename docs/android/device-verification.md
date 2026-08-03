@@ -99,3 +99,17 @@ adb -s R5CX10VFFBA shell dumpsys package com.nanako.socksbypass | grep POST_NOTI
 adb -s R5CX10VFFBA shell dumpsys notification | grep -E 'socksbypass|socks_proxy'
 adb -s R5CX10VFFBA shell dumpsys activity services com.nanako.socksbypass
 ```
+
+## FGS notification pass (2026-08-03, post-fix)
+
+**Device:** R5CX10VFFBA · APK after `da047a5` lineage · package reinstalled debug
+
+After UI **Start** (uiautomator tap):
+
+- `NotificationRecord` id=42 channel=`socks_proxy_v2` importance=3 (DEFAULT)
+- title=`SOCKS5 proxy running`
+- text=`Listening on 192.168.1.139:9876 — no password`
+- flags include `FOREGROUND_SERVICE|ONGOING_EVENT`
+- `ProxyForegroundService` `isForeground=true` `foregroundId=42` `types=0x10` (connectedDevice)
+
+UI showed `CELLULAR UNAVAILABLE` on this capture (no usable cellular INTERNET at sample time) — FGS notification still posted correctly.
