@@ -38,6 +38,29 @@ python3 Bench/socks_bench.py \
   approves them.
 - Play Store CD is intentionally out of scope without signing secrets.
 
+## Foreground service notification (acceptance)
+
+Must pass on a physical device (API 33+):
+
+1. Fresh install → system notification permission dialog appears (or in-app banner if denied).
+2. Deny notifications → UI banner; Start does not leave a silent FGS without shade entry.
+3. Allow notifications → Start → shade shows ongoing **SOCKS5 proxy running** with Stop.
+4. `adb shell dumpsys activity services …ProxyForegroundService` shows foreground.
+5. Home / lock screen → notification remains; proxy still accepts SOCKS handshake.
+6. Stop from notification or app → notification removed; service gone.
+
+## Positive cellular upstream (Ready gate)
+
+Setup: phone Wi‑Fi connected **and** mobile data on (dual network).
+
+1. Start SocksBypass; UI Upstream shows `CELLULAR · …` (not Wi‑Fi).
+2. Client on hotspot uses SOCKS5 → `curl -x socks5h://PHONE:9876 https://ifconfig.me`
+3. Returned public IP must match **cellular** egress — not the Wi‑Fi WAN IP.
+4. Toggle mobile data off → new CONNECT rejected / `CELLULAR UNAVAILABLE`; no silent Wi‑Fi fallback.
+5. Toggle mobile data on → document recover vs Stop/Start.
+
+Record: device model, Android version, date, APK commit SHA, public IPs observed.
+
 ## FGS notification repro (2026-08-03)
 
 **Device:** serial `R5CX10VFFBA` (package installed). Second adb device

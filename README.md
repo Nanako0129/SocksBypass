@@ -43,8 +43,10 @@ network you do not control.
   TCP/UDP session counts, and a recent-activity log
 - **Reachable addresses**: every interface a client could connect to, hotspot
   first, refreshed as you switch networks
-- **Keeps serving in the background** — see the caveats below
-- Written in Swift on Network.framework; no C proxy is linked into the app
+- **iOS:** Swift + Network.framework; background keep-alive via silent audio
+  session (not an App Store path) — see [Running in the background](#running-in-the-background)
+- **Android:** Kotlin + Jetpack Compose; Foreground Service (`connectedDevice`)
+  with an ongoing notification; every upstream socket bound to **cellular**
 
 ## Requirements
 
@@ -70,7 +72,6 @@ network you do not control.
 1. Clone the project (or a fork):
 ```bash
 git clone https://github.com/Nanako0129/SocksBypass.git
-# or: git clone https://github.com/ImL1s/SocksBypass.git
 ```
 
 ### iOS
@@ -191,10 +192,13 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and on `main` / `fe
 
 **CD (today):** green Android jobs publish `app-debug.apk` and JUnit reports as Actions artifacts (14-day retention). Store upload is not automated.
 
-Fork tracking: [#5 research](https://github.com/ImL1s/SocksBypass/issues/5) · [#6 Android](https://github.com/ImL1s/SocksBypass/issues/6) · [#7 Bench/iOS](https://github.com/ImL1s/SocksBypass/issues/7) · [#8 artifacts](https://github.com/ImL1s/SocksBypass/issues/8). Details: [`.github/workflows/ci-docs.md`](.github/workflows/ci-docs.md).
+Details: [`.github/workflows/ci-docs.md`](.github/workflows/ci-docs.md).
+
 ## Running in the background
 
-The app keeps serving after you switch away or the screen locks. It does that by
+### iOS only
+
+The iOS app keeps serving after you switch away or the screen locks. It does that by
 holding an active audio session that plays silence, which is why it declares the
 `audio` background mode.
 
@@ -214,6 +218,13 @@ listening to, and the samples are silent.
 
 The main screen shows whether the keep-alive is actually in effect. If it reads
 `FOREGROUND ONLY`, the app will stop serving as soon as it leaves the screen.
+
+### Android
+
+Android uses a user-started **Foreground Service** (`connectedDevice`) and an
+**ongoing notification** (with Stop). Grant notification permission on Android 13+,
+then Start — the shade entry should remain while LISTENING. See
+[docs/android/device-verification.md](docs/android/device-verification.md).
 
 ## Known limitation
 
@@ -261,9 +272,9 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 
 ---
 
-# iOS SOCKS5 Server
+# SocksBypass（iOS / Android）
 
-一個跑在 iPhone 上的 SOCKS5 代理伺服器，讓同一個網路裡的其他裝置可以透過它連線。
+跑在 **iPhone** 或 **Android** 手機上的 SOCKS5 代理，讓同一網路裡的其他裝置可以透過它連線。
 
 ## 這個專案在解什麼
 
@@ -291,13 +302,19 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 - **位址型別**：IPv4、IPv6、網域名稱（ATYP `0x01` / `0x04` / `0x03`）
 - **流量監控**：即時上傳/下載速率、累計流量、TCP/UDP 連線數、近期活動記錄
 - **可連位址**：列出所有客戶端可連的介面位址，熱點優先，切換網路時即時更新
-- **背景持續服務** —— 注意事項見下方
-- 以 Swift 搭配 Network.framework 實作，app 內不再連結任何 C 代理程式
+- **iOS 背景**：靜音音訊保活（非 App Store 路徑）——僅 iOS
+- **Android 背景**：前景服務 + 持續通知；上游強制綁門號 cellular
 
 ## 需求
 
+### iOS
+
 - iOS 17.0 以上
 - Xcode 與一個簽署帳號（免費 Apple ID 即可）
+
+### Android
+
+- Android 8.0+；需要門號數據與個人熱點能力
 
 ## 截圖
 
