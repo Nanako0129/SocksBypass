@@ -80,39 +80,27 @@ fun interface DestinationPolicy {
         private fun isBlockedSpecialIpv6(addr: Inet6Address): Boolean {
             val b = addr.address
             val z = 0.toByte()
+            val b0 = b[0].toInt() and 0xff
+            val b1 = b[1].toInt() and 0xff
+            val b2 = b[2].toInt() and 0xff
+            val b3 = b[3].toInt() and 0xff
             // Unique local addresses fc00::/7
-            if ((b[0].toInt() and 0xfe) == 0xfc) return true
+            if ((b0 and 0xfe) == 0xfc) return true
             // Documentation 2001:db8::/32
-            if (b[0] == 0x20.toByte() && b[1] == 0x01.toByte() &&
-                b[2] == 0x0d.toByte() && b[3] == 0xb8.toByte()
-            ) {
-                return true
-            }
+            if (b0 == 0x20 && b1 == 0x01 && b2 == 0x0d && b3 == 0xb8) return true
+            // Documentation 3fff::/20 (RFC 9637)
+            if (b0 == 0x3f && (b1 and 0xf0) == 0xf0) return true
             // Benchmarking 2001:2::/48 (RFC 5180)
-            if (b[0] == 0x20.toByte() && b[1] == 0x01.toByte() &&
-                b[2] == z && b[3] == 0x02.toByte()
-            ) {
-                return true
-            }
-            // ORCHIDv2 2001:20::/28 (RFC 7343) — first 28 bits of 2001:0020::/28
-            // 2001 has 16 bits; next 12 bits must be 0x002 → second hextet 0x0020–0x002f
-            if (b[0] == 0x20.toByte() && b[1] == 0x01.toByte() &&
-                b[2] == z && (b[3].toInt() and 0xf0) == 0x20
-            ) {
-                return true
-            }
-            // Well-known NAT64 64:ff9b::/96 and local-use NAT64 64:ff9b:1::/48 (RFC 8215)
-            if (b[0] == z && b[1] == 0x64.toByte() &&
-                b[2] == 0xff.toByte() && b[3] == 0x9b.toByte()
-            ) {
-                return true
-            }
-            // Discard-only 100::/64 (RFC 6666) — first 8 bytes 0100:0000:0000:0000
-            if (b[0] == 0x01.toByte() && b[1] == z &&
-                b[2] == z && b[3] == z && b[4] == z && b[5] == z && b[6] == z && b[7] == z
-            ) {
-                return true
-            }
+            if (b0 == 0x20 && b1 == 0x01 && b2 == 0x00 && b3 == 0x02) return true
+            // Deprecated ORCHID 2001:10::/28 (RFC 4843)
+            if (b0 == 0x20 && b1 == 0x01 && b2 == 0x00 && (b3 and 0xf0) == 0x10) return true
+            // ORCHIDv2 2001:20::/28 (RFC 7343)
+            if (b0 == 0x20 && b1 == 0x01 && b2 == 0x00 && (b3 and 0xf0) == 0x20) return true
+            // Well-known NAT64 64:ff9b::/96 and local-use NAT64 64:ff9b:1::/48
+            if (b0 == 0x00 && b1 == 0x64 && b2 == 0xff && b3 == 0x9b) return true
+            // Discard-Only Address Block 100::/64 (RFC 6666) and broader 100::/16
+            // (covers 100:0:0:1:: and other non-global 0100:: allocations)
+            if (b0 == 0x01 && b1 == 0x00) return true
             // IPv4-mapped ::ffff:0:0/96 — re-apply IPv4 special-purpose rules.
             val isV4Mapped = b[0] == z && b[1] == z && b[2] == z &&
                 b[3] == z && b[4] == z && b[5] == z &&

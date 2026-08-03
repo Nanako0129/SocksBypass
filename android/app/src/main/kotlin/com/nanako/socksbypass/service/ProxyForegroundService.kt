@@ -21,6 +21,9 @@ class ProxyForegroundService : Service() {
     private var cellular: CellularNetworkController? = null
     private var server: Socks5Server? = null
     private val counters = TrafficCounters(enabled = true)
+    /** Pinned failure line so session-close spam during stop cannot evict it. */
+    @Volatile
+    private var stickyFailureLine: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -46,16 +49,18 @@ class ProxyForegroundService : Service() {
 
     private fun startProxy(host: String, port: Int) {
         if (server != null) return
+        stickyFailureLine = null
 
         // Refuse silent FGS if the user disabled the notification channel/app toggle
         // while leaving POST_NOTIFICATIONS granted (Codex P1).
         if (!NotificationFactory.areNotificationsVisiblyEnabled(this)) {
+            stickyFailureLine = "notifications disabled — enable channel then Start"
             instanceState.set(
                 ProxyUiState(
                     status = ProxyStatus.Stopped,
                     bindHost = host,
                     port = port,
-                    activity = listOf("notifications disabled — enable channel then Start"),
+                    activity = listOf(stickyFailureLine!!),
                 ),
             )
             notifyListeners()
@@ -95,15 +100,21 @@ class ProxyForegroundService : Service() {
                     if (event is RelayEvent.ListenerFailed) {
                         // Must fully tear down — UI-only STOPPED left sessions/FGS alive
                         // (open-relay after hotspot/interface drop). See dual-review C1.
+                        stickyFailureLine = line
                         instanceState.updateAndGet { state ->
                             state.copy(
                                 status = ProxyStatus.Stopped,
-                                activity = (listOf(line) + state.activity).take(50),
+                                activity = pinFailureActivity(line, state.activity),
                             )
                         }
                         notifyListeners()
                         stopProxy()
                         stopSelf()
+                        return@Socks5Server
+                    }
+                    // While tearing down after a sticky failure, do not let SessionClosed
+                    // spam push the failure line out of the 50-entry activity window.
+                    if (stickyFailureLine != null && event is RelayEvent.SessionClosed) {
                         return@Socks5Server
                     }
                     instanceState.updateAndGet { state ->
@@ -121,6 +132,7 @@ class ProxyForegroundService : Service() {
             )
             val bound = socks.start()
             server = socks
+            stickyFailureLine = null
             val endpoint = "$host:$bound"
             promoteForeground(starting = false, endpoint = endpoint)
             instanceState.set(
@@ -136,13 +148,14 @@ class ProxyForegroundService : Service() {
             notifyListeners()
             statusTicker.start(this)
         } catch (e: Exception) {
+            stickyFailureLine = "listener failed: ${e.javaClass.simpleName}"
             instanceState.set(
                 ProxyUiState(
                     status = ProxyStatus.Stopped,
                     bindHost = host,
                     port = port,
                     cellularAvailable = cellular?.isAvailable ?: false,
-                    activity = listOf("listener failed: ${e.javaClass.simpleName}"),
+                    activity = listOf(stickyFailureLine!!),
                 ),
             )
             notifyListeners()
@@ -178,20 +191,32 @@ class ProxyForegroundService : Service() {
         }
         cellular = null
         counters.closeAllSessions()
-        // Preserve bindHost/port/activity so "listener failed: …" / ListenerFailed
-        // are not wiped by an empty STOPPED snapshot (Codex P2).
+        // Preserve bindHost/port + sticky failure; clear live upstream label (Codex P2/P3).
         instanceState.updateAndGet { prev ->
+            val fail = stickyFailureLine
+            val activity = if (fail != null) {
+                pinFailureActivity(fail, prev.activity)
+            } else {
+                prev.activity
+            }
             ProxyUiState(
                 status = ProxyStatus.Stopped,
                 bindHost = prev.bindHost,
                 port = prev.port,
                 cellularAvailable = false,
-                upstreamLabel = prev.upstreamLabel,
-                activity = prev.activity,
+                upstreamLabel = "CELLULAR · …",
+                activity = activity,
             )
         }
         notifyListeners()
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun pinFailureActivity(failure: String, existing: List<String>): List<String> {
+        val rest = existing.filterNot {
+            it == failure || it == "session closed" || it == "session opened"
+        }
+        return (listOf(failure) + rest).take(50)
     }
 
     override fun onDestroy() {

@@ -189,6 +189,9 @@ class DestinationPolicyAndDnsPathTest {
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:2::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:20::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:db8::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("3fff::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("100:0:0:1::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:10::1")))
         // Global unicast example (Google DNS)
         assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:4860:4860::8888")))
     }
