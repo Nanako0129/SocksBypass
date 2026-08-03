@@ -150,7 +150,10 @@ class TcpRelaySession(
         writeAll(listOf(reply))
         emit(RelayEvent.UdpAssociated)
         association.start()
-        // Hold control connection open; end association when client closes.
+        // Handshake used a 30s read timeout so a stuck client cannot hang forever.
+        // UDP ASSOCIATE keeps the control TCP open indefinitely (RFC 1928); idle
+        // must not tear the association down — only real EOF / error should.
+        client.soTimeout = 0
         try {
             val buf = ByteArray(1024)
             while (true) {
@@ -158,7 +161,7 @@ class TcpRelaySession(
                 if (n < 0) break
             }
         } catch (_: Exception) {
-            // control closed
+            // control closed or reset
         } finally {
             association.close()
             counters.associationClosed(id)
