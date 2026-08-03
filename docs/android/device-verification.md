@@ -37,3 +37,42 @@ python3 Bench/socks_bench.py \
   no checks until workflows exist on the base default branch or a maintainer
   approves them.
 - Play Store CD is intentionally out of scope without signing secrets.
+
+## FGS notification repro (2026-08-03)
+
+**Device:** serial `R5CX10VFFBA` (package installed). Second adb device
+`RFCY71L70JZ` present but not required for this sample.
+
+**Package:** `com.nanako.socksbypass` →
+`package:/data/app/…/com.nanako.socksbypass-…/base.apk`
+
+**POST_NOTIFICATIONS (dumpsys package):**
+- User 0 (primary): `granted=true`
+- User 95 (secondary profile): `granted=false`
+
+**Notification channel (while idle):**
+- Channel id `socks_proxy`, `mImportance=2` (**IMPORTANCE_LOW**)
+- App notification importance DEFAULT for uid 10064; importance=NONE for
+  profile uid 9510064
+
+**ProxyForegroundService / shade (sample while proxy not started):**
+- `dumpsys activity services com.nanako.socksbypass` → no service entries
+- No active `pkg=com.nanako.socksbypass` notification rows in shade dump
+
+**Classification for this sample:**
+- **B (idle):** service not running at capture time — cannot prove shade entry
+  while LISTENING from this single snapshot.
+- **C-like (structural):** channel permanently **IMPORTANCE_LOW** → easy to miss
+  even when FGS posts; plan Tasks 2–3 raise channel to DEFAULT via new id
+  `socks_proxy_v2` + monochrome status icon + Start gated on permission.
+- **E not primary:** user 0 has notifications granted; work-profile deny is a
+  secondary footgun only.
+
+**Commands used:**
+
+```bash
+adb -s R5CX10VFFBA shell pm path com.nanako.socksbypass
+adb -s R5CX10VFFBA shell dumpsys package com.nanako.socksbypass | grep POST_NOTIFICATIONS
+adb -s R5CX10VFFBA shell dumpsys notification | grep -E 'socksbypass|socks_proxy'
+adb -s R5CX10VFFBA shell dumpsys activity services com.nanako.socksbypass
+```
