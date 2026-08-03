@@ -190,6 +190,8 @@ class DestinationPolicyAndDnsPathTest {
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:20::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:db8::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("3fff::1")))
+        // 3ff0:: is outside 3fff::/20 — must remain allowed as global (unless other rules)
+        assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("3ff0::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("100:0:0:1::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:10::1")))
         // Global unicast example (Google DNS)

@@ -88,8 +88,8 @@ fun interface DestinationPolicy {
             if ((b0 and 0xfe) == 0xfc) return true
             // Documentation 2001:db8::/32
             if (b0 == 0x20 && b1 == 0x01 && b2 == 0x0d && b3 == 0xb8) return true
-            // Documentation 3fff::/20 (RFC 9637)
-            if (b0 == 0x3f && (b1 and 0xf0) == 0xf0) return true
+            // Documentation 3fff::/20 (RFC 9637): hextet 0x3fff + next 4 bits zero
+            if (b0 == 0x3f && b1 == 0xff && (b2 and 0xf0) == 0x00) return true
             // Benchmarking 2001:2::/48 (RFC 5180)
             if (b0 == 0x20 && b1 == 0x01 && b2 == 0x00 && b3 == 0x02) return true
             // Deprecated ORCHID 2001:10::/28 (RFC 4843)

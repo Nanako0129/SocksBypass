@@ -24,6 +24,8 @@ class ProxyForegroundService : Service() {
     /** Pinned failure line so session-close spam during stop cannot evict it. */
     @Volatile
     private var stickyFailureLine: String? = null
+    /** Coordinates async ListenerFailed with post-start LISTENING publish. */
+    private val startLock = Any()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -100,15 +102,17 @@ class ProxyForegroundService : Service() {
                     if (event is RelayEvent.ListenerFailed) {
                         // Must fully tear down — UI-only STOPPED left sessions/FGS alive
                         // (open-relay after hotspot/interface drop). See dual-review C1.
-                        stickyFailureLine = line
-                        instanceState.updateAndGet { state ->
-                            state.copy(
-                                status = ProxyStatus.Stopped,
-                                activity = pinFailureActivity(line, state.activity),
-                            )
+                        synchronized(startLock) {
+                            stickyFailureLine = line
+                            instanceState.updateAndGet { state ->
+                                state.copy(
+                                    status = ProxyStatus.Stopped,
+                                    activity = pinFailureActivity(line, state.activity),
+                                )
+                            }
+                            notifyListeners()
+                            stopProxyLocked()
                         }
-                        notifyListeners()
-                        stopProxy()
                         stopSelf()
                         return@Socks5Server
                     }
@@ -131,22 +135,39 @@ class ProxyForegroundService : Service() {
                 },
             )
             val bound = socks.start()
-            server = socks
-            stickyFailureLine = null
-            val endpoint = "$host:$bound"
-            promoteForeground(starting = false, endpoint = endpoint)
-            instanceState.set(
-                ProxyUiState(
-                    status = ProxyStatus.Listening,
-                    bindHost = host,
-                    port = bound,
-                    cellularAvailable = cell.isAvailable,
-                    upstreamLabel = upstreamLabel(cell),
-                    activity = listOf("LISTENING"),
-                ),
-            )
-            notifyListeners()
-            statusTicker.start(this)
+            // Publish server / LISTENING only if accept thread has not already failed
+            // between start() returning and assignment (Codex P2 race).
+            val published = synchronized(startLock) {
+                if (stickyFailureLine != null) {
+                    try {
+                        socks.stop()
+                    } catch (_: Exception) {
+                    }
+                    false
+                } else {
+                    server = socks
+                    stickyFailureLine = null
+                    val endpoint = "$host:$bound"
+                    promoteForeground(starting = false, endpoint = endpoint)
+                    instanceState.set(
+                        ProxyUiState(
+                            status = ProxyStatus.Listening,
+                            bindHost = host,
+                            port = bound,
+                            cellularAvailable = cell.isAvailable,
+                            upstreamLabel = upstreamLabel(cell),
+                            activity = listOf("LISTENING"),
+                        ),
+                    )
+                    notifyListeners()
+                    statusTicker.start(this)
+                    true
+                }
+            }
+            if (!published) {
+                stopSelf()
+                return
+            }
         } catch (e: Exception) {
             stickyFailureLine = "listener failed: ${e.javaClass.simpleName}"
             instanceState.set(
@@ -179,6 +200,13 @@ class ProxyForegroundService : Service() {
     }
 
     private fun stopProxy() {
+        synchronized(startLock) {
+            stopProxyLocked()
+        }
+    }
+
+    /** Caller must hold [startLock] when racing with post-start publish. */
+    private fun stopProxyLocked() {
         statusTicker.stop()
         try {
             server?.stop()
