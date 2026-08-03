@@ -163,7 +163,8 @@ jobs:
       - name: Build for generic iOS Simulator (no signing)
         run: |
           set -euo pipefail
-          # Only shared scheme today is SocksBypass-Benchmark; try it unsigned.
+          # Shared scheme today is SocksBypass-Benchmark (needs vendored XCFramework for link).
+          # Job is continue-on-error; do NOT append || true — real failures must show red.
           xcodebuild \
             -project SocksBypass.xcodeproj \
             -scheme SocksBypass-Benchmark \
@@ -171,8 +172,7 @@ jobs:
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            build \
-            | xcpretty || true
+            build
 
   # ---------------------------------------------------------------------------
   # Aggregate gate used by branch protection (all required jobs)
