@@ -46,65 +46,67 @@ class ProxyForegroundService : Service() {
 
     private fun startProxy(host: String, port: Int) {
         if (server != null) return
-        val cell = CellularNetworkController(this).also { cellular = it }
-        cell.onAvailabilityChanged = { available ->
-            instanceState.updateAndGet {
-                it.copy(cellularAvailable = available)
-            }
-            notifyListeners()
-        }
-        cell.start()
 
-        val endpoint = "$host:$port"
-        val notification = NotificationFactory.build(this, endpoint)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceCompat.startForeground(
-                this,
-                NotificationFactory.NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-            )
-        } else {
-            startForeground(NotificationFactory.NOTIFICATION_ID, notification)
-        }
+        // Promote to foreground *before* any work that can throw (5s FGS deadline).
+        promoteForeground(starting = true, endpoint = null)
+        instanceState.set(
+            ProxyUiState(
+                status = ProxyStatus.Listening,
+                bindHost = host,
+                port = port,
+                activity = listOf("starting…"),
+            ),
+        )
+        notifyListeners()
 
-        val socks = Socks5Server(
-            bindHost = host,
-            port = port,
-            upstream = cell,
-            counters = counters,
-            eventHandler = { event ->
-                val line = describe(event)
-                if (event is RelayEvent.ListenerFailed) {
-                    // Must fully tear down — UI-only STOPPED left sessions/FGS alive
-                    // (open-relay after hotspot/interface drop). See dual-review C1.
-                    instanceState.updateAndGet { state ->
-                        state.copy(
-                            status = ProxyStatus.Stopped,
-                            activity = (listOf(line) + state.activity).take(50),
-                        )
-                    }
-                    notifyListeners()
-                    stopProxy()
-                    stopSelf()
-                    return@Socks5Server
-                }
-                instanceState.updateAndGet { state ->
-                    val log = (listOf(line) + state.activity).take(50)
-                    when (event) {
-                        is RelayEvent.ConnectEstablished -> state.copy(activity = log)
-                        is RelayEvent.ConnectRejected -> state.copy(activity = log)
-                        is RelayEvent.UdpAssociated -> state.copy(activity = log)
-                        is RelayEvent.UdpAssociateFailed -> state.copy(activity = log)
-                        else -> state.copy(activity = log)
-                    }
+        try {
+            val cell = CellularNetworkController(this).also { cellular = it }
+            cell.onAvailabilityChanged = { available ->
+                instanceState.updateAndGet {
+                    it.copy(cellularAvailable = available)
                 }
                 notifyListeners()
-            },
-        )
-        try {
+            }
+            cell.start()
+
+            val socks = Socks5Server(
+                bindHost = host,
+                port = port,
+                upstream = cell,
+                counters = counters,
+                eventHandler = { event ->
+                    val line = describe(event)
+                    if (event is RelayEvent.ListenerFailed) {
+                        // Must fully tear down — UI-only STOPPED left sessions/FGS alive
+                        // (open-relay after hotspot/interface drop). See dual-review C1.
+                        instanceState.updateAndGet { state ->
+                            state.copy(
+                                status = ProxyStatus.Stopped,
+                                activity = (listOf(line) + state.activity).take(50),
+                            )
+                        }
+                        notifyListeners()
+                        stopProxy()
+                        stopSelf()
+                        return@Socks5Server
+                    }
+                    instanceState.updateAndGet { state ->
+                        val log = (listOf(line) + state.activity).take(50)
+                        when (event) {
+                            is RelayEvent.ConnectEstablished -> state.copy(activity = log)
+                            is RelayEvent.ConnectRejected -> state.copy(activity = log)
+                            is RelayEvent.UdpAssociated -> state.copy(activity = log)
+                            is RelayEvent.UdpAssociateFailed -> state.copy(activity = log)
+                            else -> state.copy(activity = log)
+                        }
+                    }
+                    notifyListeners()
+                },
+            )
             val bound = socks.start()
             server = socks
+            val endpoint = "$host:$bound"
+            promoteForeground(starting = false, endpoint = endpoint)
             instanceState.set(
                 ProxyUiState(
                     status = ProxyStatus.Listening,
@@ -123,13 +125,27 @@ class ProxyForegroundService : Service() {
                     status = ProxyStatus.Stopped,
                     bindHost = host,
                     port = port,
-                    cellularAvailable = cell.isAvailable,
+                    cellularAvailable = cellular?.isAvailable ?: false,
                     activity = listOf("listener failed: ${e.javaClass.simpleName}"),
                 ),
             )
             notifyListeners()
             stopProxy()
             stopSelf()
+        }
+    }
+
+    private fun promoteForeground(starting: Boolean, endpoint: String?) {
+        val notification = NotificationFactory.build(this, endpoint, starting = starting)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(
+                this,
+                NotificationFactory.NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            )
+        } else {
+            startForeground(NotificationFactory.NOTIFICATION_ID, notification)
         }
     }
 
