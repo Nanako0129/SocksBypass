@@ -1,0 +1,177 @@
+# SocksBypass CI — Android (required) + Bench (required) + iOS smoke (soft)
+# Tracking: ImL1s/SocksBypass#5 #6 #7 #8
+name: CI
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Android: pure JVM unit tests + debug debug APK
+  # ---------------------------------------------------------------------------
+  android:
+    name: Android (socks-core test + assemble)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Official Gradle Action: wrapper validation + User Home cache.
+      # Do NOT also set setup-java cache: gradle (conflicts with this action).
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install platform 36 + build-tools
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          yes | sdkmanager --licenses >/dev/null || true
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platforms"
+
+      - name: Unit tests (socks-core)
+        run: ./gradlew :socks-core:test --stacktrace --no-daemon
+
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Lint (non-blocking until baseline is stable)
+        continue-on-error: true
+        run: ./gradlew :app:lintDebug --stacktrace --no-daemon
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: socks-core-test-reports
+          path: |
+            android/socks-core/build/test-results/test/**
+            android/socks-core/build/reports/tests/test/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload debug APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Black-box protocol oracle (no device)
+  # ---------------------------------------------------------------------------
+  bench:
+    name: Bench self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: SOCKS5 host oracle self-test
+        run: python3 Bench/socks_bench.py --mode self-test
+
+      - name: Bench unit (decide)
+        run: |
+          if [ -f Bench/test_decide.py ]; then
+            python3 -m unittest Bench/test_decide.py -v
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Structural / tree checks (fast, no SDKs)
+  # ---------------------------------------------------------------------------
+  structure:
+    name: Structure gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Android tree present and Xcode untouched by Gradle
+        run: |
+          set -euo pipefail
+          test -f android/settings.gradle.kts
+          test -f android/gradlew
+          test -f android/app/src/main/AndroidManifest.xml
+          test -d android/socks-core/src/main/kotlin
+          test -f SocksBypass.xcodeproj/project.pbxproj
+          # Gradle must not be referenced from the Xcode project
+          if grep -E 'gradle|build\.gradle' SocksBypass.xcodeproj/project.pbxproj; then
+            echo "ERROR: Xcode project must not reference Gradle" >&2
+            exit 1
+          fi
+          # FGS + cellular contract surface
+          grep -n 'foregroundServiceType="connectedDevice"' android/app/src/main/AndroidManifest.xml
+          grep -Rn 'TRANSPORT_CELLULAR' android/app/src/main/kotlin
+          grep -n 'minSdk = 26' android/app/build.gradle.kts
+          grep -E -n 'targetSdk = 36|compileSdk = 36' android/app/build.gradle.kts
+          # No default 0.0.0.0 bind for production server start
+          grep -Rn 'isAnyLocalAddress\|must not be 0.0.0.0' android/socks-core/src/main/kotlin
+
+  # ---------------------------------------------------------------------------
+  # iOS inventory only (soft). Full xcodebuild needs vendored XCFramework —
+  # do not burn macos-latest minutes on a scheme that cannot link clean.
+  # ---------------------------------------------------------------------------
+  ios-smoke:
+    name: iOS project list
+    runs-on: macos-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: List Xcode project / schemes
+        run: |
+          set -euo pipefail
+          xcodebuild -list -project SocksBypass.xcodeproj
+          xcodebuild -version || true
+
+  # ---------------------------------------------------------------------------
+  # Aggregate gate used by branch protection (all required jobs)
+  # ---------------------------------------------------------------------------
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [android, bench, structure]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require green required jobs
+        run: |
+          echo "android=${{ needs.android.result }}"
+          echo "bench=${{ needs.bench.result }}"
+          echo "structure=${{ needs.structure.result }}"
+          test "${{ needs.android.result }}" = "success"
+          test "${{ needs.bench.result }}" = "success"
+          test "${{ needs.structure.result }}" = "success"

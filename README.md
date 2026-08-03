@@ -1,7 +1,14 @@
-# iOS SOCKS5 Server
+# SocksBypass
 
-A SOCKS5 proxy server that runs on your iPhone, so other devices on the same
-network can route traffic through it.
+A SOCKS5 proxy server that runs on your **iPhone** or **Android** phone so other
+devices on the same network can route traffic through it.
+
+| Platform | Stack | Upstream path |
+| -------- | ----- | ------------- |
+| iOS | Swift + Network.framework | Device default route (as today) |
+| Android | Kotlin + Jetpack Compose + Java sockets | Every outbound socket bound to **cellular** |
+
+The Android tree lives under `android/` and does not touch the Xcode project.
 
 ## Why this exists
 
@@ -36,13 +43,23 @@ network you do not control.
   TCP/UDP session counts, and a recent-activity log
 - **Reachable addresses**: every interface a client could connect to, hotspot
   first, refreshed as you switch networks
-- **Keeps serving in the background** — see the caveats below
-- Written in Swift on Network.framework; no C proxy is linked into the app
+- **iOS:** Swift + Network.framework; background keep-alive via silent audio
+  session (not an App Store path) — see [Running in the background](#running-in-the-background)
+- **Android:** Kotlin + Jetpack Compose; Foreground Service (`connectedDevice`)
+  with an ongoing notification; every upstream socket bound to **cellular**
 
 ## Requirements
 
+### iOS
+
 - iOS 17.0 or later
 - Xcode with a signing account (a free Apple ID works)
+
+### Android
+
+- Android 8.0+ (API 26); app targets API 36
+- Android Studio or command-line SDK 36 + JDK 17
+- A phone with **mobile data** and the ability to open a **personal hotspot**
 
 ## Screenshot
 
@@ -52,10 +69,12 @@ network you do not control.
 
 ## Installation
 
-1. Clone the project:
+1. Clone the project (or a fork):
 ```bash
 git clone https://github.com/Nanako0129/SocksBypass.git
 ```
+
+### iOS
 
 2. Open the Xcode project:
 - Open `SocksBypass.xcodeproj`
@@ -67,7 +86,26 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 - Select it in Xcode
 - Run
 
+### Android
+
+2. Open the Gradle project:
+```bash
+cd android
+# optional: echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties
+./gradlew :app:assembleDebug
+```
+
+3. Install on a device:
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Or open the `android/` folder in Android Studio, run on a physical device
+(emulator has no real cellular for the fail-closed upstream path).
+
 ## Usage
+
+### iOS
 
 1. Launch the app
 2. Wait for the IP address and port to appear (default port 9876)
@@ -79,9 +117,88 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 For USB instead of Wi-Fi, use [danielpaulus/go-ios](https://github.com/danielpaulus/go-ios)
 forward mode: `ios forward 1080 9876`, then point the client at `127.0.0.1`.
 
+### Android (cellular-bound proxy)
+
+Android is designed for this flow:
+
+```text
+computer  --Wi-Fi-->  phone hotspot :9876  --SOCKS5-->  phone app
+                                              |
+                                              v
+                                    each Socket bound to CELLULAR
+                                              |
+                                              v
+                                           4G / 5G
+```
+
+1. On the phone, open **Settings → Hotspot / tethering** and enable the personal
+   hotspot. The app does **not** start tethering for you (no privileged APIs).
+2. Launch SocksBypass. Grant notification permission if asked (foreground service).
+3. Tap **Refresh addresses** and select the hotspot private IP (e.g.
+   `192.168.43.1`). The app never defaults to `0.0.0.0`.
+4. Tap **Start**. Status should read `LISTENING`. Upstream should show
+   `CELLULAR · …`. If mobile data is off, status becomes `CELLULAR UNAVAILABLE`
+   and new CONNECT sessions are **rejected** (no silent Wi-Fi fallback).
+5. On the computer (joined to the phone hotspot), configure SOCKS5:
+   - Host: the selected listen IP
+   - Port: `9876` (unless you changed it)
+   - Authentication: none
+
+#### What has / has not been device-proven
+
+| Claim | Status |
+|-------|--------|
+| Fail-closed when cellular INTERNET is unavailable (CONNECT rejected, no Wi-Fi fallback) | Proven on device in development |
+| Positive “all traffic only on 4G/5G” end-to-end | **Not proven** without a usable cellular INTERNET Network — unit/CI green does not prove radio path |
+| Upstream GitHub PR checks on a cross-fork PR | Often empty until the maintainer approves workflows or CI lands on their default branch; use the **fork Actions** tab |
+
+See also [docs/android/device-verification.md](docs/android/device-verification.md).
+
+#### Black-box bench layers
+
+```bash
+# Layer 1 — no phone (CI + local)
+python3 Bench/socks_bench.py --mode self-test
+
+# Layer 2 — phone proxy; target must be reachable *from the phone's upstream*
+# (prefer an Internet host when testing cellular — not the laptop's 127.0.0.1)
+python3 Bench/socks_bench.py \
+  --mode correctness \
+  --proxy-host 192.168.43.1 \
+  --proxy-port 9876 \
+  --target-host <host-reachable-via-phone-cellular>
+```
+
+Unit tests for the pure SOCKS core (no device required):
+
+```bash
+cd android && ./gradlew :socks-core:test
+```
+
+Production CONNECT/UDP refuse loopback, link-local, any-local, and multicast
+destinations. Non-literal hosts always resolve via the cellular-bound path —
+never process-default DNS for fake “IP-looking” strings.
+
+## CI / CD
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and on `main` / `feature/**` pushes:
+
+| Job | Required | What it does |
+|-----|----------|--------------|
+| **Android** | yes | JDK 17 + SDK 36, `./gradlew :socks-core:test :app:assembleDebug`, upload APK + reports |
+| **Bench** | yes | `python3 Bench/socks_bench.py --mode self-test` |
+| **Structure** | yes | Android tree present, no Gradle in Xcode, FGS/`connectedDevice`/cellular/SDK gates |
+| **iOS smoke** | soft | `xcodebuild -list` + best-effort unsigned simulator build |
+
+**CD (today):** green Android jobs publish `app-debug.apk` and JUnit reports as Actions artifacts (14-day retention). Store upload is not automated.
+
+Details: [`.github/workflows/ci-docs.md`](.github/workflows/ci-docs.md).
+
 ## Running in the background
 
-The app keeps serving after you switch away or the screen locks. It does that by
+### iOS only
+
+The iOS app keeps serving after you switch away or the screen locks. It does that by
 holding an active audio session that plays silence, which is why it declares the
 `audio` background mode.
 
@@ -102,7 +219,16 @@ listening to, and the samples are silent.
 The main screen shows whether the keep-alive is actually in effect. If it reads
 `FOREGROUND ONLY`, the app will stop serving as soon as it leaves the screen.
 
+### Android
+
+Android uses a user-started **Foreground Service** (`connectedDevice`) and an
+**ongoing notification** (with Stop). Grant notification permission on Android 13+,
+then Start — the shade entry should remain while LISTENING. See
+[docs/android/device-verification.md](docs/android/device-verification.md).
+
 ## Known limitation
+
+### iOS only
 
 If a client half-closes its write side (`shutdown(SHUT_WR)`) while a large
 response is still arriving, the tail of that response can be lost. The cause is
@@ -111,10 +237,17 @@ sitting in the receive buffer are discarded, and the framework exposes no option
 to drain them. BSD sockets do not behave this way, which has been confirmed on
 device.
 
-The relay never reports this as success — a truncated stream is aborted with a
+The iOS relay never reports this as success — a truncated stream is aborted with a
 reset rather than a clean end-of-stream, so the client sees a connection error
 instead of a short file that looks complete. Ordinary HTTP clients and browsers
 do not half-close mid-response and are not affected.
+
+### Android
+
+The Android relay uses blocking Java sockets with `shutdownOutput()` and does
+**not** share the Network.framework half-close truncation. Listen addresses are
+restricted to personal-hotspot / SoftAP interfaces when possible — enable the
+phone hotspot before Start (station Wi‑Fi alone is not offered for bind).
 
 ## Notes
 
@@ -148,9 +281,9 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 
 ---
 
-# iOS SOCKS5 Server
+# SocksBypass（iOS / Android）
 
-一個跑在 iPhone 上的 SOCKS5 代理伺服器，讓同一個網路裡的其他裝置可以透過它連線。
+跑在 **iPhone** 或 **Android** 手機上的 SOCKS5 代理，讓同一網路裡的其他裝置可以透過它連線。
 
 ## 這個專案在解什麼
 
@@ -178,13 +311,19 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 - **位址型別**：IPv4、IPv6、網域名稱（ATYP `0x01` / `0x04` / `0x03`）
 - **流量監控**：即時上傳/下載速率、累計流量、TCP/UDP 連線數、近期活動記錄
 - **可連位址**：列出所有客戶端可連的介面位址，熱點優先，切換網路時即時更新
-- **背景持續服務** —— 注意事項見下方
-- 以 Swift 搭配 Network.framework 實作，app 內不再連結任何 C 代理程式
+- **iOS 背景**：靜音音訊保活（非 App Store 路徑）——僅 iOS
+- **Android 背景**：前景服務 + 持續通知；上游強制綁門號 cellular
 
 ## 需求
 
+### iOS
+
 - iOS 17.0 以上
 - Xcode 與一個簽署帳號（免費 Apple ID 即可）
+
+### Android
+
+- Android 8.0+；需要門號數據與個人熱點能力
 
 ## 截圖
 
@@ -223,6 +362,8 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 ## 背景運作
 
+### 僅 iOS
+
 切換到其他 app 或鎖屏之後，代理仍會繼續服務。做法是持續持有一個播放靜音的音訊
 工作階段，這也是它宣告 `audio` 背景模式的原因。
 
@@ -238,6 +379,12 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 主畫面會顯示保活是否真的生效。如果顯示 `FOREGROUND ONLY`，代表 app 一離開畫面就
 會停止服務。
+
+### Android
+
+Android 使用使用者啟動的**前景服務**（`connectedDevice`）與**持續通知**（含 Stop）。
+Android 13+ 請允許通知權限後再 Start；詳見
+[docs/android/device-verification.md](docs/android/device-verification.md)。
 
 ## 已知限制
 

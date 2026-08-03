@@ -23,3 +23,14 @@ Vendor/
 .claude/
 __pycache__/
 *.pyc
+
+# Android / Gradle
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/captures/
+*.apk
+*.aab
+.cxx/

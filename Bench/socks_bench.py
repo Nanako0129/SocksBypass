@@ -523,9 +523,9 @@ def check_udp_association(proxy, target_host):
         while True:
             try:
                 data, peer = echo.recvfrom(65535)
+                echo.sendto(data, peer)
             except OSError:
                 return
-            echo.sendto(data, peer)
 
     threading.Thread(target=serve, daemon=True).start()
 
@@ -649,12 +649,17 @@ def relay(client, target_host, target_port):
         client.sendall(b"\x05\x00\x00\x01" + socket.inet_aton(target_host) + target_port.to_bytes(2, "big"))
 
         def pump(source, destination):
+            # Linux GHA runners can raise ENOTCONN (107) on send after the peer
+            # has already torn down the socket; macOS more often surfaces EPIPE /
+            # BrokenPipe. Treat all OSError here as a closed relay, not a hard fail.
             try:
                 while True:
                     chunk = source.recv(CHUNK_SIZE)
                     if not chunk:
                         break
                     destination.sendall(chunk)
+            except OSError:
+                pass
             finally:
                 try:
                     destination.shutdown(socket.SHUT_WR)
@@ -693,16 +698,21 @@ def udp_associate(client):
                 return
             if client_address is None and len(data) > 10 and data[:3] == b"\x00\x00\x00":
                 client_address = source
-            if source == client_address:
-                if len(data) < 11 or data[3] != 1:
-                    continue
-                host = socket.inet_ntoa(data[4:8])
-                port = int.from_bytes(data[8:10], "big")
-                relay_socket.sendto(data[10:], (host, port))
-            else:
-                header = (b"\x00\x00\x00\x01" + socket.inet_aton(source[0])
-                          + source[1].to_bytes(2, "big"))
-                relay_socket.sendto(header + data, client_address)
+            if client_address is None:
+                continue
+            try:
+                if source == client_address:
+                    if len(data) < 11 or data[3] != 1:
+                        continue
+                    host = socket.inet_ntoa(data[4:8])
+                    port = int.from_bytes(data[8:10], "big")
+                    relay_socket.sendto(data[10:], (host, port))
+                else:
+                    header = (b"\x00\x00\x00\x01" + socket.inet_aton(source[0])
+                              + source[1].to_bytes(2, "big"))
+                    relay_socket.sendto(header + data, client_address)
+            except OSError:
+                return
 
     threading.Thread(target=pump, daemon=True).start()
     client.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("127.0.0.1")
@@ -794,10 +804,23 @@ def self_test():
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="SOCKS5 host oracle; normal modes require an external proxy")
+    parser = argparse.ArgumentParser(
+        description=(
+            "SOCKS5 host oracle; normal modes require an external proxy. "
+            "Works for both iOS and Android: pass the phone listen IP/port "
+            "(Android: hotspot IP after Start, e.g. 192.168.43.1:9876)."
+        )
+    )
     parser.add_argument("--mode", choices=("self-test", "correctness", "exact", "churn", *SUSTAINED_MODES), default="self-test")
-    parser.add_argument("--proxy-host")
-    parser.add_argument("--proxy-port", type=int)
+    parser.add_argument(
+        "--proxy-host",
+        help="SOCKS5 proxy host (iPhone Wi-Fi/hotspot IP or Android hotspot IP)",
+    )
+    parser.add_argument(
+        "--proxy-port",
+        type=int,
+        help="SOCKS5 proxy port (default app port is 9876)",
+    )
     parser.add_argument("--target-bind", default="0.0.0.0")
     parser.add_argument("--target-host")
     parser.add_argument("--seconds", type=float, default=45.0)
