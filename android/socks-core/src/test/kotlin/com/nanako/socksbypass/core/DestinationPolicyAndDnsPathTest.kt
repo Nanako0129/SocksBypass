@@ -169,6 +169,19 @@ class DestinationPolicyAndDnsPathTest {
         assertTrue(DestinationPolicy.ALLOW_ALL.isAllowed(InetAddress.getByName("10.0.0.1")))
     }
 
+    @Test
+    fun productionPolicyRejectsAdditionalSpecialPurposeIpv4() {
+        // Codex follow-up: fallthrough special-use that is not site-local/link-local
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("0.0.0.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("192.0.0.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("192.0.2.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("198.18.0.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("198.51.100.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("203.0.113.1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("240.0.0.1")))
+        assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("8.8.8.8")))
+    }
+
     private fun readExact(input: InputStream, n: Int): ByteArray {
         val out = ByteArray(n)
         var off = 0

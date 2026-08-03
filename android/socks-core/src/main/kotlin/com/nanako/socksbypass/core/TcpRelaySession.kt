@@ -24,6 +24,8 @@ class TcpRelaySession(
     private val counters: TrafficCounters,
     private val connectTimeoutMs: Int = 10_000,
     private val soTimeoutMs: Int = 0,
+    /** Absolute wall-clock budget for the SOCKS handshake (not per-read SO_TIMEOUT). */
+    private val handshakeDeadlineMs: Long = DEFAULT_HANDSHAKE_DEADLINE_MS,
     private val destinationPolicy: DestinationPolicy = DestinationPolicy.PRODUCTION,
     private val emit: (RelayEvent) -> Unit,
     private val onClosed: (UUID) -> Unit,
@@ -79,11 +81,25 @@ class TcpRelaySession(
     }
 
     private fun runHandshakeAndRelay() {
+        // Per-read idle timeout (resets each successful read)…
         client.soTimeout = 30_000
+        // …plus absolute deadline so a peer cannot keep a half-open handshake
+        // forever by dribbling one byte under SO_TIMEOUT (Codex P1).
+        val deadlineAt = System.nanoTime() + handshakeDeadlineMs * 1_000_000L
         val parser = Socks5HandshakeParser()
         val buf = ByteArray(8 * 1024)
         while (!parser.isActive && !parser.isClosed) {
-            val n = clientIn.read(buf)
+            if (System.nanoTime() >= deadlineAt) {
+                return
+            }
+            val remainingMs = ((deadlineAt - System.nanoTime()) / 1_000_000L)
+                .coerceIn(1L, 30_000L)
+            client.soTimeout = remainingMs.toInt()
+            val n = try {
+                clientIn.read(buf)
+            } catch (_: java.net.SocketTimeoutException) {
+                return
+            }
             if (n < 0) {
                 val finished = parser.finish()
                 writeAll(finished.replies)
@@ -447,5 +463,10 @@ class TcpRelaySession(
             emit(RelayEvent.SessionClosed)
         }
         onClosed(id)
+    }
+
+    companion object {
+        /** Wall-clock limit for method + request parsing before CONNECT/UDP. */
+        const val DEFAULT_HANDSHAKE_DEADLINE_MS = 60_000L
     }
 }
