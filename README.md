@@ -3,6 +3,23 @@
 A SOCKS5 proxy server that runs on your iPhone, so other devices on the same
 network can route traffic through it.
 
+## Why this exists
+
+When you tether a laptop to your phone, the laptop's packets are *forwarded* by
+the phone. They reach the carrier carrying the laptop's TCP/IP fingerprint and a
+TTL one hop lower than anything the phone sends itself. That difference is what
+tethering detection looks for.
+
+This proxy removes it. The laptop speaks SOCKS5 to the phone, and the phone
+opens its own connection to the destination — so the packets that leave the
+radio are originated by the phone's own IP stack and look like traffic the phone
+generated.
+
+**This only makes sense over the phone's own hotspot.** Pointing a client at the
+proxy across ordinary Wi-Fi achieves nothing — that client already has the
+network's own uplink — and it leaves a passwordless gateway listening on a
+network you do not control.
+
 > ### ⚠️ There is no password
 >
 > The proxy accepts **NO AUTH** connections. Anyone who can reach your phone's
@@ -134,6 +151,19 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 # iOS SOCKS5 Server
 
 一個跑在 iPhone 上的 SOCKS5 代理伺服器，讓同一個網路裡的其他裝置可以透過它連線。
+
+## 這個專案在解什麼
+
+用筆電連手機的個人熱點時，筆電送出的封包是被手機**轉發**出去的：它們抵達電信商時
+帶著筆電自己的 TCP/IP 指紋，而且 TTL 比手機自己發的流量少一跳。分享偵測看的就是
+這個差異。
+
+這個代理把差異消掉。筆電對手機講 SOCKS5，由手機自己對目的地開連線——離開基地台的
+封包因此是手機自己的 IP stack 產生的，看起來就是手機自身的流量。
+
+**這只在手機自己的熱點上才有意義。** 讓客戶端透過一般 Wi-Fi 連這個代理沒有任何作
+用——那台客戶端本來就有該網路的上行——而且會把一個沒有密碼的閘道留在你不掌控的網
+段上。
 
 > ### ⚠️ 沒有密碼
 >
