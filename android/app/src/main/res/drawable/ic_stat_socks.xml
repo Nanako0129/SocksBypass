@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Monochrome white 24dp status-bar glyph: proxy / tunnel style -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+    <!-- Left node -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M5,10a2,2 0 1,1 0,4a2,2 0 1,1 0,-4z" />
+    <!-- Right node -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M19,10a2,2 0 1,1 0,4a2,2 0 1,1 0,-4z" />
+    <!-- Center hub -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,8a4,4 0 1,1 0,8a4,4 0 1,1 0,-8z" />
+    <!-- Link left hub -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M7,11h3v2H7z" />
+    <!-- Link right hub -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14,11h3v2h-3z" />
+</vector>

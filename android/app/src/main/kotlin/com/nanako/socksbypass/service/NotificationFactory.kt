@@ -12,7 +12,8 @@ import com.nanako.socksbypass.MainActivity
 import com.nanako.socksbypass.R
 
 object NotificationFactory {
-    const val CHANNEL_ID = "socks_proxy"
+    // v2: IMPORTANCE_DEFAULT — Android freezes importance on existing channel IDs
+    const val CHANNEL_ID = "socks_proxy_v2"
     const val NOTIFICATION_ID = 42
 
     fun ensureChannel(context: Context) {
@@ -21,7 +22,7 @@ object NotificationFactory {
         val channel = NotificationChannel(
             CHANNEL_ID,
             context.getString(R.string.notification_channel_name),
-            NotificationManager.IMPORTANCE_LOW,
+            NotificationManager.IMPORTANCE_DEFAULT,
         ).apply {
             description = context.getString(R.string.notification_channel_desc)
             setShowBadge(false)
@@ -29,7 +30,11 @@ object NotificationFactory {
         manager.createNotificationChannel(channel)
     }
 
-    fun build(context: Context, endpoint: String?): Notification {
+    fun build(
+        context: Context,
+        endpoint: String?,
+        starting: Boolean = false,
+    ): Notification {
         ensureChannel(context)
         val open = PendingIntent.getActivity(
             context,
@@ -43,18 +48,25 @@ object NotificationFactory {
             Intent(context, ProxyForegroundService::class.java).setAction(ProxyForegroundService.ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-        val text = if (endpoint.isNullOrBlank()) {
-            context.getString(R.string.notification_text)
+        val text = when {
+            starting -> context.getString(R.string.notification_starting)
+            endpoint.isNullOrBlank() -> context.getString(R.string.notification_text)
+            else -> "Listening on $endpoint — no password"
+        }
+        val title = if (starting) {
+            context.getString(R.string.notification_title_starting)
         } else {
-            "Listening on $endpoint — no password"
+            context.getString(R.string.notification_title)
         }
         return NotificationCompat.Builder(context, CHANNEL_ID)
-            .setContentTitle(context.getString(R.string.notification_title))
+            .setContentTitle(title)
             .setContentText(text)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_stat_socks)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .addAction(0, context.getString(R.string.notification_stop), stop)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
