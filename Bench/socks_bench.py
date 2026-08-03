@@ -131,6 +131,28 @@ def send_parts(sock, data, split_at=None, one_byte=False):
         sock.sendall(data)
 
 
+def safe_shutdown(sock, how=socket.SHUT_WR):
+    """Half-close without failing when the peer already tore the socket down.
+
+    Linux GHA often surfaces ENOTCONN (errno 107) if the server closed first;
+    macOS more often uses errno 57 / EPIPE. For adversarial / rejection checks
+    that intentionally provoke a close, that is success-shaped noise, not a
+    protocol failure.
+    """
+    try:
+        sock.shutdown(how)
+    except OSError:
+        pass
+
+
+def closed_peer_recv(sock, length=2):
+    """Read up to `length` bytes, mapping reset/ENOTCONN to empty bytes."""
+    try:
+        return sock.recv(length)
+    except (ConnectionResetError, BrokenPipeError, OSError):
+        return b""
+
+
 def socks_connect(
     proxy_host,
     proxy_port,
@@ -481,11 +503,10 @@ def expect_method_rejection(proxy, greeting):
     sock.settimeout(20)
     try:
         sock.sendall(greeting)
-        sock.shutdown(socket.SHUT_WR)
-        try:
-            response = sock.recv(2)
-        except ConnectionResetError:
-            response = b""
+        # Server may RST/close as soon as it sees a bad greeting; shutdown then
+        # races with peer teardown (ENOTCONN on Linux CI).
+        safe_shutdown(sock)
+        response = closed_peer_recv(sock, 2)
         if response == b"\x05\x00":
             raise ValueError("invalid greeting accepted")
     finally:
@@ -613,15 +634,14 @@ def run_correctness(proxy, target_host, target):
     expect_method_rejection(proxy, b"\x04\x01\x00")
     truncated = socket.create_connection(proxy, timeout=20)
     truncated.settimeout(20)
-    truncated.sendall(bytes((5, 255)) + bytes((0,)) * 254)
-    truncated.shutdown(socket.SHUT_WR)
     try:
-        truncated_response = truncated.recv(1)
-    except ConnectionResetError:
-        truncated_response = b""
-    if truncated_response:
-        raise ValueError("truncated NMETHODS frame produced data")
-    truncated.close()
+        truncated.sendall(bytes((5, 255)) + bytes((0,)) * 254)
+        safe_shutdown(truncated)
+        truncated_response = closed_peer_recv(truncated, 1)
+        if truncated_response:
+            raise ValueError("truncated NMETHODS frame produced data")
+    finally:
+        truncated.close()
     checks.extend(("username_password_only", "invalid_greeting_version", "nmethods_255_truncated"))
 
     valid_address = socket.inet_aton(target_host) + target.port.to_bytes(2, "big")
