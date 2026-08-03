@@ -26,6 +26,7 @@ class UdpAssociation(
     private val upstream: UpstreamNetwork,
     private val counters: TrafficCounters,
     private val soTimeoutMs: Int = 500,
+    private val destinationPolicy: DestinationPolicy = DestinationPolicy.PRODUCTION,
 ) {
     private val closed = AtomicBoolean(false)
     private val lanSocket: DatagramSocket
@@ -174,12 +175,9 @@ class UdpAssociation(
         val decoded = DatagramHeader.decode(data) ?: return
         when (decoded.header.addressType) {
             DatagramHeader.AddressType.Ipv4, DatagramHeader.AddressType.Ipv6 -> {
-                val dest = try {
-                    InetSocketAddress(InetAddress.getByName(decoded.header.address), decoded.header.port)
-                } catch (_: Exception) {
-                    return
-                }
-                sendUpstream(decoded.payload, dest)
+                val addr = StrictIpLiteral.parse(decoded.header.address) ?: return
+                if (!destinationPolicy.isAllowed(addr)) return
+                sendUpstream(decoded.payload, InetSocketAddress(addr, decoded.header.port))
             }
             DatagramHeader.AddressType.Domain -> {
                 val key = decoded.header.address.lowercase()
@@ -188,6 +186,7 @@ class UdpAssociation(
                         @Suppress("UNCHECKED_CAST")
                         val addrs = state as List<InetAddress>
                         for (addr in addrs) {
+                            if (!destinationPolicy.isAllowed(addr)) continue
                             if (sendUpstream(decoded.payload, InetSocketAddress(addr, decoded.header.port))) break
                         }
                     }
@@ -222,6 +221,7 @@ class UdpAssociation(
                             if (queued != null) {
                                 for ((payload, port) in queued) {
                                     for (addr in result) {
+                                        if (!destinationPolicy.isAllowed(addr)) continue
                                         if (sendUpstream(payload, InetSocketAddress(addr, port))) break
                                     }
                                 }
@@ -245,6 +245,7 @@ class UdpAssociation(
 
     private fun sendUpstream(payload: ByteArray, dest: InetSocketAddress): Boolean {
         if (closed.get() || !upstream.isAvailable) return false
+        if (!destinationPolicy.isAllowed(dest.address)) return false
         return try {
             rememberAllowed(endpointKey(dest))
             val packet = DatagramPacket(payload, payload.size, dest)
@@ -365,11 +366,7 @@ class UdpAssociation(
                     byteArrayOf(0, 0, 0, 0x03, bytes.size.toByte()) + bytes
                 }
                 AddressType.Ipv6 -> {
-                    val ip = try {
-                        InetAddress.getByName(address).address
-                    } catch (_: Exception) {
-                        return null
-                    }
+                    val ip = StrictIpLiteral.parse(address)?.address ?: return null
                     if (ip.size != 16) return null
                     byteArrayOf(0, 0, 0, 0x04) + ip
                 }

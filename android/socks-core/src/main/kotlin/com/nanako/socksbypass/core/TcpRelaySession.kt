@@ -21,6 +21,7 @@ class TcpRelaySession(
     private val counters: TrafficCounters,
     private val connectTimeoutMs: Int = 10_000,
     private val soTimeoutMs: Int = 0,
+    private val destinationPolicy: DestinationPolicy = DestinationPolicy.PRODUCTION,
     private val emit: (RelayEvent) -> Unit,
     private val onClosed: (UUID) -> Unit,
     private val udpFactory: (
@@ -34,6 +35,7 @@ class TcpRelaySession(
             lanBindAddress = local,
             upstream = upstream,
             counters = counters,
+            destinationPolicy = destinationPolicy,
         )
     },
 ) {
@@ -98,6 +100,11 @@ class TcpRelaySession(
         } catch (e: UpstreamUnavailableException) {
             writeAll(listOf(Socks5HandshakeParser.requestReply(0x03)))
             emit(RelayEvent.ConnectRejected(0x03))
+            return
+        } catch (_: DestinationDeniedException) {
+            // RFC 1928 REP 0x02 not allowed by ruleset
+            writeAll(listOf(Socks5HandshakeParser.requestReply(0x02)))
+            emit(RelayEvent.ConnectRejected(0x02))
             return
         } catch (_: Exception) {
             writeAll(listOf(Socks5HandshakeParser.requestReply(0x05)))
@@ -197,8 +204,8 @@ class TcpRelaySession(
         if (cleaned.get()) throw IOException("session cancelled")
         if (!upstream.isAvailable) throw UpstreamUnavailableException()
         val addresses = try {
-            // Prefer numeric parse to avoid DNS when ATYP was IP
-            val numeric = tryParseNumeric(target.address)
+            // Strict literal only — never process-default DNS (see StrictIpLiteral).
+            val numeric = StrictIpLiteral.parse(target.address)
             if (numeric != null) listOf(numeric) else upstream.resolve(target.address)
         } catch (e: UpstreamUnavailableException) {
             throw e
@@ -208,8 +215,13 @@ class TcpRelaySession(
         if (addresses.isEmpty()) throw IOException("resolve failed")
         if (cleaned.get()) throw IOException("session cancelled")
 
+        val allowed = addresses.filter { destinationPolicy.isAllowed(it) }
+        if (allowed.isEmpty()) {
+            throw DestinationDeniedException("all resolved addresses denied by policy")
+        }
+
         var last: Exception? = null
-        for (addr in addresses) {
+        for (addr in allowed) {
             if (cleaned.get()) throw IOException("session cancelled")
             var socket: Socket? = null
             try {
@@ -233,18 +245,6 @@ class TcpRelaySession(
             }
         }
         throw last ?: IOException("connect failed")
-    }
-
-    private fun tryParseNumeric(host: String): InetAddress? = try {
-        if (host.matches(Regex("""\d+\.\d+\.\d+\.\d+"""))) {
-            InetAddress.getByName(host)
-        } else if (host.contains(':')) {
-            InetAddress.getByName(host)
-        } else {
-            null
-        }
-    } catch (_: Exception) {
-        null
     }
 
     private fun boundEndpoint(socket: Socket): Socks5HandshakeParser.Companion.BoundEndpoint? {

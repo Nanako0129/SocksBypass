@@ -20,6 +20,7 @@ class Socks5Server(
     private val upstream: UpstreamNetwork,
     private val counters: TrafficCounters = TrafficCounters(),
     private val maxSessions: Int = 256,
+    private val destinationPolicy: DestinationPolicy = DestinationPolicy.PRODUCTION,
     private val eventHandler: (RelayEvent) -> Unit = {},
 ) {
     enum class State { Stopped, Starting, Running, Stopping }
@@ -134,6 +135,7 @@ class Socks5Server(
                 client = client,
                 upstream = upstream,
                 counters = counters,
+                destinationPolicy = destinationPolicy,
                 emit = eventHandler,
                 onClosed = { id -> sessions.remove(id) },
             )

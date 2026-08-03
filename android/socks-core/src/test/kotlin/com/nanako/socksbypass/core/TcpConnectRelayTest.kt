@@ -21,6 +21,7 @@ class TcpConnectRelayTest {
             bindHost = "0.0.0.0",
             port = 0,
             upstream = DefaultJvmUpstreamNetwork(),
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
         ).start()
     }
 
@@ -31,6 +32,7 @@ class TcpConnectRelayTest {
             bindHost = "127.0.0.1",
             port = 0,
             upstream = upstream,
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
         )
         val listenPort = server.start()
         try {
@@ -71,6 +73,7 @@ class TcpConnectRelayTest {
             bindHost = "127.0.0.1",
             port = 0,
             upstream = upstream,
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
         )
         val listenPort = server.start()
         try {
@@ -142,6 +145,7 @@ class TcpConnectRelayTest {
             bindHost = "127.0.0.1",
             port = 0,
             upstream = upstream,
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
         )
         val listenPort = server.start()
         try {
@@ -215,7 +219,7 @@ class TcpConnectRelayTest {
             override fun createTcpSocket(): Socket = Socket()
             override fun createUdpSocket() = java.net.DatagramSocket()
         }
-        val server = Socks5Server(bindHost = "127.0.0.1", port = 0, upstream = upstream)
+        val server = Socks5Server(bindHost = "127.0.0.1", port = 0, upstream = upstream, destinationPolicy = DestinationPolicy.ALLOW_ALL)
         val listenPort = server.start()
         try {
             Socket("127.0.0.1", listenPort).use { client ->

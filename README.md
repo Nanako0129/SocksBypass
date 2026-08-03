@@ -143,15 +143,29 @@ computer  --Wi-Fi-->  phone hotspot :9876  --SOCKS5-->  phone app
    - Port: `9876` (unless you changed it)
    - Authentication: none
 
-Black-box checks from a machine that can reach the phone:
+#### What has / has not been device-proven
+
+| Claim | Status |
+|-------|--------|
+| Fail-closed when cellular INTERNET is unavailable (CONNECT rejected, no Wi-Fi fallback) | Proven on device in development |
+| Positive “all traffic only on 4G/5G” end-to-end | **Not proven** without a usable cellular INTERNET Network — unit/CI green does not prove radio path |
+| Upstream GitHub PR checks on a cross-fork PR | Often empty until the maintainer approves workflows or CI lands on their default branch; use the **fork Actions** tab |
+
+See also [docs/android/device-verification.md](docs/android/device-verification.md).
+
+#### Black-box bench layers
 
 ```bash
-# Target server must be reachable via the phone's cellular path.
+# Layer 1 — no phone (CI + local)
+python3 Bench/socks_bench.py --mode self-test
+
+# Layer 2 — phone proxy; target must be reachable *from the phone's upstream*
+# (prefer an Internet host when testing cellular — not the laptop's 127.0.0.1)
 python3 Bench/socks_bench.py \
   --mode correctness \
   --proxy-host 192.168.43.1 \
   --proxy-port 9876 \
-  --target-host <echo-or-lab-host-on-internet>
+  --target-host <host-reachable-via-phone-cellular>
 ```
 
 Unit tests for the pure SOCKS core (no device required):
@@ -159,6 +173,10 @@ Unit tests for the pure SOCKS core (no device required):
 ```bash
 cd android && ./gradlew :socks-core:test
 ```
+
+Production CONNECT/UDP refuse loopback, link-local, any-local, and multicast
+destinations. Non-literal hosts always resolve via the cellular-bound path —
+never process-default DNS for fake “IP-looking” strings.
 
 ## CI / CD
 

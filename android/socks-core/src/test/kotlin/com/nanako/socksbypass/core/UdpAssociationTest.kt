@@ -65,6 +65,7 @@ class UdpAssociationTest {
             lanBindAddress = InetAddress.getByName("127.0.0.1"),
             upstream = DefaultJvmUpstreamNetwork(),
             counters = TrafficCounters(),
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
         )
         association.start()
         try {
@@ -118,6 +119,7 @@ class UdpAssociationTest {
             lanBindAddress = InetAddress.getByName("127.0.0.1"),
             upstream = upstream,
             counters = TrafficCounters(),
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
         )
         association.start()
         try {
@@ -177,6 +179,7 @@ class UdpAssociationTest {
             lanBindAddress = InetAddress.getByName("127.0.0.1"),
             upstream = DefaultJvmUpstreamNetwork(),
             counters = TrafficCounters(),
+            destinationPolicy = DestinationPolicy.ALLOW_ALL,
         )
         association.start()
         try {
@@ -242,7 +245,7 @@ class UdpAssociationTest {
         }
 
         val upstream = DefaultJvmUpstreamNetwork()
-        val server = Socks5Server(bindHost = "127.0.0.1", port = 0, upstream = upstream)
+        val server = Socks5Server(bindHost = "127.0.0.1", port = 0, upstream = upstream, destinationPolicy = DestinationPolicy.ALLOW_ALL)
         val listenPort = server.start()
         var associationUdpPort = -1
         try {
@@ -331,7 +334,7 @@ class UdpAssociationTest {
     fun udpAssociateControlTcpSurvivesIdleBeyondHandshakeTimeout() {
         // Regression: handshake soTimeout must not kill an idle UDP control TCP.
         val upstream = DefaultJvmUpstreamNetwork()
-        val server = Socks5Server(bindHost = "127.0.0.1", port = 0, upstream = upstream)
+        val server = Socks5Server(bindHost = "127.0.0.1", port = 0, upstream = upstream, destinationPolicy = DestinationPolicy.ALLOW_ALL)
         val listenPort = server.start()
         try {
             val client = Socket("127.0.0.1", listenPort)
