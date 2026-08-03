@@ -1,0 +1,82 @@
+# Tag → GitHub Release with installable debug APK
+# Usage: git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build APK + GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install platform 36 + build-tools
+        run: |
+          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          yes | sdkmanager --licenses >/dev/null || true
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Unit tests (socks-core)
+        run: ./gradlew :socks-core:test --stacktrace --no-daemon
+
+      - name: Assemble debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          NOTES="$(mktemp)"
+          cat >"$NOTES" <<EOF
+          ## ${TAG}
+
+          Automated release from tag \`${TAG}\`.
+
+          ### Android
+          - Debug APK: \`app-debug.apk\` (unsigned — sideload / testing only)
+          - Not Play Store / production signed
+
+          ### Install
+          1. Download \`app-debug.apk\` from Assets below
+          2. Enable install from unknown sources if needed
+          3. Open the phone **personal hotspot** → Start in app → SOCKS5 at shown IP:9876
+
+          See README for hotspot + cellular-bound behaviour.
+          EOF
+          gh release create "$TAG" "$APK" \
+            --title "${TAG}" \
+            --notes-file "$NOTES" \
+            --verify-tag
