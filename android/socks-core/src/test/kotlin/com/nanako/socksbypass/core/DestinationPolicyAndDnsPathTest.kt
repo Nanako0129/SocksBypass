@@ -182,6 +182,17 @@ class DestinationPolicyAndDnsPathTest {
         assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("8.8.8.8")))
     }
 
+    @Test
+    fun productionPolicyRejectsSpecialPurposeIpv6() {
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("64:ff9b:1::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("64:ff9b::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:2::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:20::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:db8::1")))
+        // Global unicast example (Google DNS)
+        assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:4860:4860::8888")))
+    }
+
     private fun readExact(input: InputStream, n: Int): ByteArray {
         val out = ByteArray(n)
         var off = 0

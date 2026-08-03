@@ -178,7 +178,18 @@ class ProxyForegroundService : Service() {
         }
         cellular = null
         counters.closeAllSessions()
-        instanceState.set(ProxyUiState(status = ProxyStatus.Stopped))
+        // Preserve bindHost/port/activity so "listener failed: …" / ListenerFailed
+        // are not wiped by an empty STOPPED snapshot (Codex P2).
+        instanceState.updateAndGet { prev ->
+            ProxyUiState(
+                status = ProxyStatus.Stopped,
+                bindHost = prev.bindHost,
+                port = prev.port,
+                cellularAvailable = false,
+                upstreamLabel = prev.upstreamLabel,
+                activity = prev.activity,
+            )
+        }
         notifyListeners()
         stopForeground(STOP_FOREGROUND_REMOVE)
     }

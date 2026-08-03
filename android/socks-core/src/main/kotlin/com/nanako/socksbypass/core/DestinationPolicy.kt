@@ -79,6 +79,7 @@ fun interface DestinationPolicy {
 
         private fun isBlockedSpecialIpv6(addr: Inet6Address): Boolean {
             val b = addr.address
+            val z = 0.toByte()
             // Unique local addresses fc00::/7
             if ((b[0].toInt() and 0xfe) == 0xfc) return true
             // Documentation 2001:db8::/32
@@ -87,8 +88,26 @@ fun interface DestinationPolicy {
             ) {
                 return true
             }
+            // Benchmarking 2001:2::/48 (RFC 5180)
+            if (b[0] == 0x20.toByte() && b[1] == 0x01.toByte() &&
+                b[2] == z && b[3] == 0x02.toByte()
+            ) {
+                return true
+            }
+            // ORCHIDv2 2001:20::/28 (RFC 7343) — first 28 bits of 2001:0020::/28
+            // 2001 has 16 bits; next 12 bits must be 0x002 → second hextet 0x0020–0x002f
+            if (b[0] == 0x20.toByte() && b[1] == 0x01.toByte() &&
+                b[2] == z && (b[3].toInt() and 0xf0) == 0x20
+            ) {
+                return true
+            }
+            // Well-known NAT64 64:ff9b::/96 and local-use NAT64 64:ff9b:1::/48 (RFC 8215)
+            if (b[0] == z && b[1] == 0x64.toByte() &&
+                b[2] == 0xff.toByte() && b[3] == 0x9b.toByte()
+            ) {
+                return true
+            }
             // Discard-only 100::/64 (RFC 6666) — first 8 bytes 0100:0000:0000:0000
-            val z = 0.toByte()
             if (b[0] == 0x01.toByte() && b[1] == z &&
                 b[2] == z && b[3] == z && b[4] == z && b[5] == z && b[6] == z && b[7] == z
             ) {
