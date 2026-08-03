@@ -56,7 +56,13 @@ class Socks5Server(
         synchronized(lifecycle) {
             check(state == State.Stopped) { "already running" }
             require(bindHost.isNotBlank()) { "bindHost required" }
-            val addr = InetAddress.getByName(bindHost)
+            // Prefer strict literal parse — no process-default DNS for "looks like IP".
+            val addr = StrictIpLiteral.parse(bindHost)
+                ?: if (bindHost == "localhost") {
+                    InetAddress.getByName("127.0.0.1")
+                } else {
+                    error("bindHost must be an IP literal, got $bindHost")
+                }
             // Never silently open on all interfaces / non-private targets.
             require(!addr.isAnyLocalAddress) {
                 "bindHost must not be 0.0.0.0 / :: (select a private hotspot address)"
@@ -65,10 +71,20 @@ class Socks5Server(
                 "unexpected loopback bind"
             }
             // Production path: private IPv4 only (tests may use 127.0.0.1).
-            if (addr is java.net.Inet4Address && !addr.isLoopbackAddress) {
-                val host = addr.hostAddress ?: bindHost
-                require(isPrivateIpv4(host)) {
-                    "bindHost must be a private IPv4 address, got $host"
+            // Global IPv6 bind is rejected — listen surface is hotspot/LAN private.
+            when (addr) {
+                is java.net.Inet4Address -> {
+                    if (!addr.isLoopbackAddress) {
+                        val host = addr.hostAddress ?: bindHost
+                        require(isPrivateIpv4(host)) {
+                            "bindHost must be a private IPv4 address, got $host"
+                        }
+                    }
+                }
+                else -> {
+                    require(addr.isLoopbackAddress) {
+                        "bindHost must be private IPv4 (or loopback); got $bindHost"
+                    }
                 }
             }
             state = State.Starting

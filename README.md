@@ -228,6 +228,8 @@ then Start — the shade entry should remain while LISTENING. See
 
 ## Known limitation
 
+### iOS only
+
 If a client half-closes its write side (`shutdown(SHUT_WR)`) while a large
 response is still arriving, the tail of that response can be lost. The cause is
 Network.framework: once a half-closed connection finishes closing, bytes still
@@ -235,10 +237,17 @@ sitting in the receive buffer are discarded, and the framework exposes no option
 to drain them. BSD sockets do not behave this way, which has been confirmed on
 device.
 
-The relay never reports this as success — a truncated stream is aborted with a
+The iOS relay never reports this as success — a truncated stream is aborted with a
 reset rather than a clean end-of-stream, so the client sees a connection error
 instead of a short file that looks complete. Ordinary HTTP clients and browsers
 do not half-close mid-response and are not affected.
+
+### Android
+
+The Android relay uses blocking Java sockets with `shutdownOutput()` and does
+**not** share the Network.framework half-close truncation. Listen addresses are
+restricted to personal-hotspot / SoftAP interfaces when possible — enable the
+phone hotspot before Start (station Wi‑Fi alone is not offered for bind).
 
 ## Notes
 

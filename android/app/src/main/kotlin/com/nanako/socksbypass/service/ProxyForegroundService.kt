@@ -37,9 +37,20 @@ class ProxyForegroundService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_START, null -> {
+                // Always enter FGS promptly when started via startForegroundService.
+                promoteForeground(starting = true, endpoint = null)
                 val host = intent?.getStringExtra(EXTRA_BIND_HOST)
                 val port = intent?.getIntExtra(EXTRA_PORT, DEFAULT_PORT) ?: DEFAULT_PORT
                 if (host.isNullOrBlank()) {
+                    stickyFailureLine = "missing bind host"
+                    instanceState.set(
+                        ProxyUiState(
+                            status = ProxyStatus.Stopped,
+                            activity = listOf(stickyFailureLine!!),
+                        ),
+                    )
+                    notifyListeners()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -55,6 +66,7 @@ class ProxyForegroundService : Service() {
 
         // Refuse silent FGS if the user disabled the notification channel/app toggle
         // while leaving POST_NOTIFICATIONS granted (Codex P1).
+        // Caller already promoted FGS; tear down cleanly if notifications unusable.
         if (!NotificationFactory.areNotificationsVisiblyEnabled(this)) {
             stickyFailureLine = "notifications disabled — enable channel then Start"
             instanceState.set(
@@ -66,12 +78,11 @@ class ProxyForegroundService : Service() {
                 ),
             )
             notifyListeners()
+            stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
         }
 
-        // Promote to foreground *before* any work that can throw (5s FGS deadline).
-        promoteForeground(starting = true, endpoint = null)
         instanceState.set(
             ProxyUiState(
                 status = ProxyStatus.Starting,

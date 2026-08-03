@@ -101,7 +101,18 @@ fun interface DestinationPolicy {
             // Discard-Only Address Block 100::/64 (RFC 6666) and broader 100::/16
             // (covers 100:0:0:1:: and other non-global 0100:: allocations)
             if (b0 == 0x01 && b1 == 0x00) return true
-            // IPv4-mapped ::ffff:0:0/96 — re-apply IPv4 special-purpose rules.
+            // SRv6 SIDs 5f00::/16 (RFC 9602) — not globally reachable
+            if (b0 == 0x5f && b1 == 0x00) return true
+            // IPv4-compatible ::a.b.c.d (deprecated RFC 4291) — first 96 bits zero.
+            // Java keeps these as Inet6Address (unlike mapped), so re-apply IPv4 rules
+            // or we accept ::10.0.0.1 / ::127.0.0.1 as "global" (upstream review).
+            val first12Zero = (0 until 12).all { b[it] == z }
+            if (first12Zero) {
+                val v4 = InetAddress.getByAddress(b.copyOfRange(12, 16)) as Inet4Address
+                return isBlockedProductionDestination(v4)
+            }
+            // IPv4-mapped ::ffff:a.b.c.d — often already demoted to Inet4Address by
+            // getByAddress; keep for any path that still surfaces Inet6Address.
             val isV4Mapped = b[0] == z && b[1] == z && b[2] == z &&
                 b[3] == z && b[4] == z && b[5] == z &&
                 b[6] == z && b[7] == z &&

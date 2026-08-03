@@ -141,38 +141,22 @@ jobs:
           grep -Rn 'isAnyLocalAddress\|must not be 0.0.0.0' android/socks-core/src/main/kotlin
 
   # ---------------------------------------------------------------------------
-  # iOS smoke (soft until shared unit-test scheme exists)
+  # iOS inventory only (soft). Full xcodebuild needs vendored XCFramework —
+  # do not burn macos-latest minutes on a scheme that cannot link clean.
   # ---------------------------------------------------------------------------
   ios-smoke:
-    name: iOS xcodebuild smoke
+    name: iOS project list
     runs-on: macos-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: List Xcode project
-        run: xcodebuild -list -project SocksBypass.xcodeproj
-
-      - name: Select latest Xcode (best-effort)
-        run: |
-          ls /Applications | grep -i Xcode || true
-          sudo xcode-select -s /Applications/Xcode.app/Contents/Developer || true
-          xcodebuild -version
-
-      - name: Build for generic iOS Simulator (no signing)
+      - name: List Xcode project / schemes
         run: |
           set -euo pipefail
-          # Shared scheme today is SocksBypass-Benchmark (needs vendored XCFramework for link).
-          # Job is continue-on-error; do NOT append || true — real failures must show red.
-          xcodebuild \
-            -project SocksBypass.xcodeproj \
-            -scheme SocksBypass-Benchmark \
-            -destination 'generic/platform=iOS Simulator' \
-            -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build
+          xcodebuild -list -project SocksBypass.xcodeproj
+          xcodebuild -version || true
 
   # ---------------------------------------------------------------------------
   # Aggregate gate used by branch protection (all required jobs)

@@ -65,7 +65,8 @@ class ProxyViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshEndpoints() {
-        val list = LocalEndpointScanner.scanPrivateIpv4()
+        // Context-aware scan: SoftAP off → empty (do not offer café STA wlan0).
+        val list = LocalEndpointScanner.scanPrivateIpv4(getApplication())
         _state.update { current ->
             val selected = current.selectedAddress
                 ?.takeIf { addr -> list.any { it.address == addr } }

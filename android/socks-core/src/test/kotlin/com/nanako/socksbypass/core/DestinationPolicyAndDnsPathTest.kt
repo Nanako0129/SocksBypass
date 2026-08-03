@@ -194,8 +194,19 @@ class DestinationPolicyAndDnsPathTest {
         assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("3ff0::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("100:0:0:1::1")))
         assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:10::1")))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("5f00::1")))
         // Global unicast example (Google DNS)
         assertTrue(DestinationPolicy.PRODUCTION.isAllowed(InetAddress.getByName("2001:4860:4860::8888")))
+    }
+
+    @Test
+    fun productionPolicyRejectsIpv4CompatibleForm() {
+        // ::10.0.0.1 / ::127.0.0.1 must not bypass PRODUCTION (upstream review).
+        val priv = InetAddress.getByName("::10.0.0.1")
+        val loop = InetAddress.getByName("::127.0.0.1")
+        assertTrue(priv is java.net.Inet6Address)
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(priv))
+        assertFalse(DestinationPolicy.PRODUCTION.isAllowed(loop))
     }
 
     private fun readExact(input: InputStream, n: Int): ByteArray {
