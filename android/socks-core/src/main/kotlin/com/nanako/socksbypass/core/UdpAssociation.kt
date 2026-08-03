@@ -8,8 +8,11 @@ import java.net.SocketTimeoutException
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -261,15 +264,43 @@ class UdpAssociation(
                     return
                 }
                 if (startDns) {
-                    dnsExecutor.execute {
-                        completeDns(key, host)
+                    try {
+                        dnsExecutor.execute {
+                            if (closed.get()) {
+                                abandonPendingResolution(key)
+                                return@execute
+                            }
+                            completeDns(key, host)
+                        }
+                    } catch (_: RejectedExecutionException) {
+                        // Bounded queue full — drop this host's pending state.
+                        abandonPendingResolution(key)
                     }
                 }
             }
         }
     }
 
+    private fun abandonPendingResolution(key: String) {
+        pendingResolutions.decrementAndGet()
+        synchronized(resolutionLock) {
+            val pending = resolutions.remove(key)
+            if (pending is ResolutionState.Pending) {
+                for (item in pending.queue) {
+                    pendingBytes.addAndGet(-item.bytes.toLong())
+                    globalPendingBytes.addAndGet(-item.bytes.toLong())
+                }
+                pending.queue.clear()
+            }
+            resolutionOrder.remove(key)
+        }
+    }
+
     private fun completeDns(key: String, host: String) {
+        if (closed.get()) {
+            abandonPendingResolution(key)
+            return
+        }
         val result = try {
             if (!upstream.isAvailable) emptyList()
             else upstream.resolve(host)
@@ -277,7 +308,7 @@ class UdpAssociation(
             emptyList()
         }
         if (closed.get()) {
-            pendingResolutions.decrementAndGet()
+            abandonPendingResolution(key)
             return
         }
         val toFlush: List<PendingDatagram>
@@ -494,8 +525,18 @@ class UdpAssociation(
             Thread(r, "socks-udp-dns").apply { isDaemon = true }
         }
 
-        /** Shared DNS pool — avoids unbounded per-datagram threads. */
-        internal val dnsExecutor: ExecutorService =
-            Executors.newFixedThreadPool(4, dnsThreadFactory)
+        /**
+         * Shared DNS pool with a **bounded** queue (Codex P2). Association churn
+         * under slow cellular DNS must not retain unlimited stale work.
+         */
+        internal val dnsExecutor: ExecutorService = ThreadPoolExecutor(
+            /* corePoolSize */ 4,
+            /* maximumPoolSize */ 4,
+            /* keepAliveTime */ 60L,
+            TimeUnit.SECONDS,
+            LinkedBlockingQueue(64),
+            dnsThreadFactory,
+            ThreadPoolExecutor.AbortPolicy(),
+        )
     }
 }

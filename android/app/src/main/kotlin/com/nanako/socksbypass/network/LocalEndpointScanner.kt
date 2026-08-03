@@ -21,8 +21,23 @@ object LocalEndpointScanner {
             emptyList()
         }
         for (nif in interfaces) {
-            if (!nif.isUp || nif.isLoopback) continue
-            val name = nif.name.lowercase()
+            // isUp/isLoopback can throw SocketException while ifaces churn (hotspot).
+            val up = try {
+                nif.isUp
+            } catch (_: Exception) {
+                continue
+            }
+            val loopback = try {
+                nif.isLoopback
+            } catch (_: Exception) {
+                continue
+            }
+            if (!up || loopback) continue
+            val name = try {
+                nif.name.lowercase()
+            } catch (_: Exception) {
+                continue
+            }
             if (isExcludedInterface(name)) continue
             val addrs = try {
                 nif.inetAddresses.toList()

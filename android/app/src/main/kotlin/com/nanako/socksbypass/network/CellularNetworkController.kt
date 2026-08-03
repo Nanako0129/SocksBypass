@@ -98,7 +98,15 @@ class CellularNetworkController(
     override fun createUdpSocket(): DatagramSocket {
         val network = cellular.get() ?: throw UpstreamUnavailableException()
         val socket = DatagramSocket()
-        network.bindSocket(socket)
+        try {
+            network.bindSocket(socket)
+        } catch (e: Exception) {
+            try {
+                socket.close()
+            } catch (_: Exception) {
+            }
+            throw e
+        }
         return socket
     }
 
