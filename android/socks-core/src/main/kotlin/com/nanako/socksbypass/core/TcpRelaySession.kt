@@ -86,6 +86,7 @@ class TcpRelaySession(
     }
 
     private fun handleConnect(request: Socks5HandshakeParser.Request) {
+        if (cleaned.get()) return
         if (!upstream.isAvailable) {
             writeAll(listOf(Socks5HandshakeParser.requestReply(0x03)))
             emit(RelayEvent.ConnectRejected(0x03))
@@ -103,7 +104,23 @@ class TcpRelaySession(
             emit(RelayEvent.ConnectRejected(0x05))
             return
         }
+        // cancel() may have run while DNS/connect was blocked — never publish a late socket.
+        if (cleaned.get()) {
+            try {
+                socket.close()
+            } catch (_: Exception) {
+            }
+            return
+        }
         target = socket
+        if (cleaned.get()) {
+            try {
+                socket.close()
+            } catch (_: Exception) {
+            }
+            target = null
+            return
+        }
         val bound = boundEndpoint(socket)
         writeAll(listOf(Socks5HandshakeParser.requestReply(0x00, bound)))
         emit(RelayEvent.ConnectEstablished)
@@ -118,6 +135,7 @@ class TcpRelaySession(
     }
 
     private fun handleUdp(request: Socks5HandshakeParser.Request) {
+        if (cleaned.get()) return
         if (!upstream.isAvailable) {
             writeAll(listOf(Socks5HandshakeParser.requestReply(0x03)))
             emit(RelayEvent.UdpAssociateFailed)
@@ -144,31 +162,39 @@ class TcpRelaySession(
             emit(RelayEvent.UdpAssociateFailed)
             return
         }
+        // Counter + reply must share a cleanup path even if writeAll throws.
         udp = association
         counters.associationOpened(id)
-        val reply = association.successReply()
-        writeAll(listOf(reply))
-        emit(RelayEvent.UdpAssociated)
-        association.start()
-        // Handshake used a 30s read timeout so a stuck client cannot hang forever.
-        // UDP ASSOCIATE keeps the control TCP open indefinitely (RFC 1928); idle
-        // must not tear the association down — only real EOF / error should.
-        client.soTimeout = 0
+        var associationCounted = true
         try {
+            if (cleaned.get()) return
+            val reply = association.successReply()
+            writeAll(listOf(reply))
+            emit(RelayEvent.UdpAssociated)
+            association.start()
+            // Handshake used a 30s read timeout so a stuck client cannot hang forever.
+            // UDP ASSOCIATE keeps the control TCP open indefinitely (RFC 1928); idle
+            // must not tear the association down — only real EOF / error should.
+            client.soTimeout = 0
             val buf = ByteArray(1024)
             while (true) {
                 val n = clientIn.read(buf)
                 if (n < 0) break
             }
         } catch (_: Exception) {
-            // control closed or reset
+            // control closed, reset, or reply write failed
         } finally {
             association.close()
-            counters.associationClosed(id)
+            if (associationCounted) {
+                counters.associationClosed(id)
+                associationCounted = false
+            }
+            udp = null
         }
     }
 
     private fun connectUpstream(target: Socks5HandshakeParser.Target): Socket {
+        if (cleaned.get()) throw IOException("session cancelled")
         if (!upstream.isAvailable) throw UpstreamUnavailableException()
         val addresses = try {
             // Prefer numeric parse to avoid DNS when ATYP was IP
@@ -180,14 +206,23 @@ class TcpRelaySession(
             emptyList()
         }
         if (addresses.isEmpty()) throw IOException("resolve failed")
+        if (cleaned.get()) throw IOException("session cancelled")
 
         var last: Exception? = null
         for (addr in addresses) {
+            if (cleaned.get()) throw IOException("session cancelled")
             var socket: Socket? = null
             try {
                 socket = upstream.createTcpSocket()
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(addr, target.port), connectTimeoutMs)
+                if (cleaned.get()) {
+                    try {
+                        socket.close()
+                    } catch (_: Exception) {
+                    }
+                    throw IOException("session cancelled")
+                }
                 return socket
             } catch (e: Exception) {
                 last = e
@@ -334,11 +369,20 @@ class TcpRelaySession(
 
     private fun cleanup() {
         if (!cleaned.compareAndSet(false, true)) return
+        val association = udp
+        udp = null
         try {
-            udp?.close()
+            association?.close()
         } catch (_: Exception) {
         }
-        udp = null
+        // If handleUdp never entered its finally (e.g. cancelled mid-setup),
+        // still drop the UDP counter so activeUdp cannot stick.
+        if (association != null) {
+            try {
+                counters.associationClosed(id)
+            } catch (_: Exception) {
+            }
+        }
         try {
             target?.close()
         } catch (_: Exception) {

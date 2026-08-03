@@ -32,6 +32,7 @@ class Socks5Server(
     private var serverSocket: ServerSocket? = null
     private val sessions = ConcurrentHashMap<UUID, TcpRelaySession>()
     private val acceptThreadName = AtomicInteger(0)
+    private val lifecycle = Any()
 
     val activeSessionCount: Int get() = sessions.size
 
@@ -43,47 +44,52 @@ class Socks5Server(
      * @throws IllegalArgumentException if bindHost is blank
      */
     fun start(): Int {
-        check(state == State.Stopped) { "already running" }
-        require(bindHost.isNotBlank()) { "bindHost required" }
-        state = State.Starting
-        val ss = ServerSocket()
-        try {
-            ss.reuseAddress = true
-            val addr = InetAddress.getByName(bindHost)
-            ss.bind(InetSocketAddress(addr, port))
-        } catch (e: Exception) {
-            state = State.Stopped
+        synchronized(lifecycle) {
+            check(state == State.Stopped) { "already running" }
+            require(bindHost.isNotBlank()) { "bindHost required" }
+            state = State.Starting
+            val ss = ServerSocket()
             try {
-                ss.close()
-            } catch (_: Exception) {
+                ss.reuseAddress = true
+                val addr = InetAddress.getByName(bindHost)
+                ss.bind(InetSocketAddress(addr, port))
+            } catch (e: Exception) {
+                state = State.Stopped
+                try {
+                    ss.close()
+                } catch (_: Exception) {
+                }
+                throw e
             }
-            throw e
+            serverSocket = ss
+            running.set(true)
+            state = State.Running
+            thread(name = "socks-accept-${acceptThreadName.incrementAndGet()}", isDaemon = true) {
+                acceptLoop(ss)
+            }
+            return ss.localPort
         }
-        serverSocket = ss
-        running.set(true)
-        state = State.Running
-        thread(name = "socks-accept-${acceptThreadName.incrementAndGet()}", isDaemon = true) {
-            acceptLoop(ss)
-        }
-        return ss.localPort
     }
 
     fun stop() {
-        if (state == State.Stopped || state == State.Stopping) {
-            if (state == State.Stopped) return
+        val toCancel: List<TcpRelaySession>
+        synchronized(lifecycle) {
+            // Always drain sessions even if already Stopped after accept failure —
+            // otherwise UI Stop can return without killing lingering relays.
+            if (state == State.Stopping) return
+            state = State.Stopping
+            running.set(false)
+            try {
+                serverSocket?.close()
+            } catch (_: Exception) {
+            }
+            serverSocket = null
+            toCancel = sessions.values.toList()
+            sessions.clear()
+            counters.closeAllSessions()
+            state = State.Stopped
         }
-        state = State.Stopping
-        running.set(false)
-        try {
-            serverSocket?.close()
-        } catch (_: Exception) {
-        }
-        serverSocket = null
-        val copy = sessions.values.toList()
-        sessions.clear()
-        copy.forEach { it.cancel() }
-        counters.closeAllSessions()
-        state = State.Stopped
+        toCancel.forEach { it.cancel() }
     }
 
     private fun acceptLoop(ss: ServerSocket) {
@@ -110,9 +116,6 @@ class Socks5Server(
                 }
                 continue
             }
-            if (!upstream.isAvailable) {
-                // Still accept for handshake to return fail-closed REP, but sessions count
-            }
             val session = TcpRelaySession(
                 client = client,
                 upstream = upstream,
@@ -120,12 +123,44 @@ class Socks5Server(
                 emit = eventHandler,
                 onClosed = { id -> sessions.remove(id) },
             )
-            sessions[session.id] = session
+            // Coordinate with stop(): only start if still running after map insert.
+            val started = synchronized(lifecycle) {
+                if (!running.get() || state != State.Running) {
+                    false
+                } else {
+                    sessions[session.id] = session
+                    true
+                }
+            }
+            if (!started) {
+                try {
+                    client.close()
+                } catch (_: Exception) {
+                }
+                session.cancel()
+                continue
+            }
             session.start()
         }
-        if (state == State.Running) {
-            state = State.Stopped
-            running.set(false)
+        // Unexpected accept failure: tear down any live sessions so Stop cannot
+        // leave relays open after the UI shows stopped.
+        val leftover: List<TcpRelaySession>
+        synchronized(lifecycle) {
+            if (state != State.Running) {
+                leftover = emptyList()
+            } else {
+                running.set(false)
+                leftover = sessions.values.toList()
+                sessions.clear()
+                counters.closeAllSessions()
+                state = State.Stopped
+                try {
+                    serverSocket?.close()
+                } catch (_: Exception) {
+                }
+                serverSocket = null
+            }
         }
+        leftover.forEach { it.cancel() }
     }
 }

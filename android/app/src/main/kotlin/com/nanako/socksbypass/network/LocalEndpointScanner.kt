@@ -50,7 +50,7 @@ object LocalEndpointScanner {
         if (name.startsWith("wg") || name.startsWith("vpn")) return true
         // Common cellular interface name patterns — never listen here
         if (name.startsWith("rmnet") || name.startsWith("ccmni") || name.startsWith("pdp")) return true
-        if (name.startsWith("wwan") || name.startsWith(" mobil") || name.contains("cellular")) return true
+        if (name.startsWith("wwan") || name.startsWith("mobile") || name.contains("cellular")) return true
         return false
     }
 

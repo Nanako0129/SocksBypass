@@ -4,8 +4,8 @@ import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.SocketAddress
 import java.net.SocketTimeoutException
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -31,6 +31,7 @@ class UdpAssociation(
     private val lanSocket: DatagramSocket
     private val upstreamSocket: DatagramSocket
     private val allowedUpstream = ConcurrentHashMap.newKeySet<String>()
+    private val allowedOrder = ArrayDeque<String>()
     @Volatile
     private var clientEndpoint: InetSocketAddress? = null
 
@@ -38,24 +39,33 @@ class UdpAssociation(
     private val resolutions = ConcurrentHashMap<String, Any>() // Resolved list or Pending/Failed
     private val resolutionOrder = ArrayList<String>()
     private val pendingResolutions = AtomicInteger(0)
-    private val pendingDatagrams = ConcurrentHashMap<String, Pair<ByteArray, Int>>()
+    /** Bounded queue of datagrams waiting on in-flight DNS (per host). */
+    private val pendingDatagrams = ConcurrentHashMap<String, ArrayDeque<Pair<ByteArray, Int>>>()
 
     val localPort: Int
 
     init {
-        lanSocket = if (lanBindAddress != null) {
+        val lan = if (lanBindAddress != null) {
             DatagramSocket(InetSocketAddress(lanBindAddress, 0))
         } else {
             DatagramSocket(0)
         }
-        lanSocket.soTimeout = soTimeoutMs
-        localPort = lanSocket.localPort
-        if (!upstream.isAvailable) {
-            lanSocket.close()
-            throw UpstreamUnavailableException()
+        lan.soTimeout = soTimeoutMs
+        localPort = lan.localPort
+        lanSocket = lan
+        try {
+            if (!upstream.isAvailable) {
+                throw UpstreamUnavailableException()
+            }
+            upstreamSocket = upstream.createUdpSocket()
+            upstreamSocket.soTimeout = soTimeoutMs
+        } catch (e: Exception) {
+            try {
+                lan.close()
+            } catch (_: Exception) {
+            }
+            throw e
         }
-        upstreamSocket = upstream.createUdpSocket()
-        upstreamSocket.soTimeout = soTimeoutMs
         if (declaredClientPort != null && declaredClientPort != 0) {
             clientEndpoint = InetSocketAddress(controlPeer, declaredClientPort)
         }
@@ -65,12 +75,11 @@ class UdpAssociation(
         val addr = lanSocket.localAddress?.address
             ?: lanBindAddress?.address
             ?: byteArrayOf(0, 0, 0, 0)
-        val atyp = if (addr.size == 16) 0x04 else 0x01
         val ip = if (addr.size == 4 || addr.size == 16) addr else byteArrayOf(0, 0, 0, 0)
         val atypFinal = if (ip.size == 16) 0x04 else 0x01
         return Socks5HandshakeParser.requestReply(
             0x00,
-            Socks5HandshakeParser.Companion.BoundEndpoint(atypFinal, if (ip.size == 4 || ip.size == 16) ip else byteArrayOf(0, 0, 0, 0), localPort),
+            Socks5HandshakeParser.Companion.BoundEndpoint(atypFinal, ip, localPort),
         )
     }
 
@@ -125,13 +134,16 @@ class UdpAssociation(
             val from = packet.socketAddress as? InetSocketAddress ?: continue
             val key = endpointKey(from)
             if (!allowedUpstream.contains(key)) {
-                // Drop: not in response allowlist (anti-reflector / spoof)
                 continue
             }
             val payload = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
             val client = clientEndpoint ?: continue
             val wrapped = DatagramHeader.encode(
-                addressType = if (from.address.address.size == 16) DatagramHeader.AddressType.Ipv6 else DatagramHeader.AddressType.Ipv4,
+                addressType = if (from.address.address.size == 16) {
+                    DatagramHeader.AddressType.Ipv6
+                } else {
+                    DatagramHeader.AddressType.Ipv4
+                },
                 address = from.address.hostAddress ?: continue,
                 port = from.port,
                 payload = payload,
@@ -152,11 +164,9 @@ class UdpAssociation(
         val existing = clientEndpoint
         if (existing != null) {
             if (existing.address != from.address || existing.port != from.port) {
-                // Second source rejected once latched
                 return
             }
         } else {
-            // Only control peer host may claim; require well-formed envelope
             if (DatagramHeader.decode(data) == null) return
             clientEndpoint = from
         }
@@ -181,18 +191,22 @@ class UdpAssociation(
                             if (sendUpstream(decoded.payload, InetSocketAddress(addr, decoded.header.port))) break
                         }
                     }
-                    Resolution.Pending, Resolution.Failed -> return
+                    Resolution.Pending -> {
+                        enqueuePending(key, decoded.payload, decoded.header.port)
+                    }
+                    Resolution.Failed -> return
                     null -> {
                         if (pendingResolutions.get() >= PENDING_RESOLUTION_LIMIT) return
                         pendingResolutions.incrementAndGet()
                         resolutions[key] = Resolution.Pending
                         synchronized(resolutionOrder) { resolutionOrder.add(key) }
-                        pendingDatagrams[key] = decoded.payload to decoded.header.port
+                        enqueuePending(key, decoded.payload, decoded.header.port)
                         evictResolutions()
+                        val host = decoded.header.address
                         thread(name = "socks-udp-dns", isDaemon = true) {
                             val result = try {
                                 if (!upstream.isAvailable) emptyList()
-                                else upstream.resolve(decoded.header.address)
+                                else upstream.resolve(host)
                             } catch (_: Exception) {
                                 emptyList()
                             }
@@ -206,8 +220,10 @@ class UdpAssociation(
                             }
                             resolutions[key] = result
                             if (queued != null) {
-                                for (addr in result) {
-                                    if (sendUpstream(queued.first, InetSocketAddress(addr, queued.second))) break
+                                for ((payload, port) in queued) {
+                                    for (addr in result) {
+                                        if (sendUpstream(payload, InetSocketAddress(addr, port))) break
+                                    }
                                 }
                             }
                         }
@@ -217,16 +233,38 @@ class UdpAssociation(
         }
     }
 
+    private fun enqueuePending(key: String, payload: ByteArray, port: Int) {
+        val queue = pendingDatagrams.getOrPut(key) { ArrayDeque() }
+        synchronized(queue) {
+            if (queue.size >= PENDING_DATAGRAMS_PER_HOST) {
+                queue.removeFirst()
+            }
+            queue.addLast(payload to port)
+        }
+    }
+
     private fun sendUpstream(payload: ByteArray, dest: InetSocketAddress): Boolean {
         if (closed.get() || !upstream.isAvailable) return false
         return try {
-            allowedUpstream.add(endpointKey(dest))
+            rememberAllowed(endpointKey(dest))
             val packet = DatagramPacket(payload, payload.size, dest)
             upstreamSocket.send(packet)
             counters.recordCommitted(payload.size, TrafficCounters.Direction.Upload)
             true
         } catch (_: Exception) {
             false
+        }
+    }
+
+    private fun rememberAllowed(key: String) {
+        if (allowedUpstream.add(key)) {
+            synchronized(allowedOrder) {
+                allowedOrder.addLast(key)
+                while (allowedOrder.size > ALLOWED_UPSTREAM_LIMIT) {
+                    val old = allowedOrder.removeFirst()
+                    allowedUpstream.remove(old)
+                }
+            }
         }
     }
 
@@ -264,7 +302,7 @@ class UdpAssociation(
             val typeByte = data[3].toInt() and 0xFF
             val type: AddressType
             val addressLength: Int
-            var addressStart: Int
+            val addressStart: Int
             when (typeByte) {
                 0x01 -> {
                     type = AddressType.Ipv4
@@ -344,5 +382,7 @@ class UdpAssociation(
     companion object {
         const val RESOLUTION_CACHE_LIMIT = 256
         const val PENDING_RESOLUTION_LIMIT = 8
+        const val PENDING_DATAGRAMS_PER_HOST = 8
+        const val ALLOWED_UPSTREAM_LIMIT = 256
     }
 }
