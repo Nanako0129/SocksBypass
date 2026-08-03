@@ -20,6 +20,9 @@ and a pure-JVM `socks-core` module (Java sockets + coroutines).
 
 Requires JDK 17 and Android SDK 36 (`local.properties` with `sdk.dir=...`).
 
+CI runs the same gates on GitHub Actions (see root `.github/workflows/ci.yml`).
+Debug APKs from green runs are downloadable under the workflow’s **Artifacts**.
+
 ## Design rules (v1)
 
 - Bind listener to a **user-selected private IP** (hotspot), not `0.0.0.0`.

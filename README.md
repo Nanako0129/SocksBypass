@@ -160,6 +160,20 @@ Unit tests for the pure SOCKS core (no device required):
 cd android && ./gradlew :socks-core:test
 ```
 
+## CI / CD
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and on `main` / `feature/**` pushes:
+
+| Job | Required | What it does |
+|-----|----------|--------------|
+| **Android** | yes | JDK 17 + SDK 36, `./gradlew :socks-core:test :app:assembleDebug`, upload APK + reports |
+| **Bench** | yes | `python3 Bench/socks_bench.py --mode self-test` |
+| **Structure** | yes | Android tree present, no Gradle in Xcode, FGS/`connectedDevice`/cellular/SDK gates |
+| **iOS smoke** | soft | `xcodebuild -list` + best-effort unsigned simulator build |
+
+**CD (today):** green Android jobs publish `app-debug.apk` and JUnit reports as Actions artifacts (14-day retention). Store upload is not automated.
+
+Fork tracking: [#5 research](https://github.com/ImL1s/SocksBypass/issues/5) · [#6 Android](https://github.com/ImL1s/SocksBypass/issues/6) · [#7 Bench/iOS](https://github.com/ImL1s/SocksBypass/issues/7) · [#8 artifacts](https://github.com/ImL1s/SocksBypass/issues/8). Details: [`.github/workflows/ci-docs.md`](.github/workflows/ci-docs.md).
 ## Running in the background
 
 The app keeps serving after you switch away or the screen locks. It does that by
