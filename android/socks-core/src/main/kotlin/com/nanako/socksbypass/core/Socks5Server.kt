@@ -131,7 +131,11 @@ class Socks5Server(
             } catch (_: Exception) {
             }
             serverSocket = null
-            toCancel = sessions.values.toList()
+            // Snapshot under lifecycle (onClosed also holds it). Avoid
+            // ConcurrentHashMap.values().iterator() races with remove.
+            toCancel = ArrayList<TcpRelaySession>(sessions.size).also { out ->
+                sessions.forEach { (_, session) -> out.add(session) }
+            }
             sessions.clear()
             counters.closeAllSessions()
             threadToJoin = acceptThread
@@ -172,7 +176,15 @@ class Socks5Server(
                 counters = counters,
                 destinationPolicy = destinationPolicy,
                 emit = eventHandler,
-                onClosed = { id -> sessions.remove(id) },
+                // Must take lifecycle: stop()/accept teardown snapshot sessions.values
+                // while a session may close concurrently. ConcurrentHashMap value
+                // iterators can throw NoSuchElementException under that race
+                // (seen on GHA as flaky UdpAssociationTest finally { server.stop() }).
+                onClosed = { id ->
+                    synchronized(lifecycle) {
+                        sessions.remove(id)
+                    }
+                },
             )
             // Insert + start under the same lock so stop() cannot cancel between
             // map insert and start() (stale counter / SessionOpened after Stop).
@@ -201,7 +213,9 @@ class Socks5Server(
                 leftover = emptyList()
             } else {
                 running.set(false)
-                leftover = sessions.values.toList()
+                leftover = ArrayList<TcpRelaySession>(sessions.size).also { out ->
+                    sessions.forEach { (_, session) -> out.add(session) }
+                }
                 sessions.clear()
                 counters.closeAllSessions()
                 state = State.Stopped
