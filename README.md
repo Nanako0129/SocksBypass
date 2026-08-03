@@ -88,6 +88,17 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 
 ### Android
 
+**Easiest — install a prebuilt APK**
+
+1. Open [Releases](https://github.com/Nanako0129/SocksBypass/releases) and download
+   `app-debug.apk` from the latest tag (e.g. [v0.1.0](https://github.com/Nanako0129/SocksBypass/releases/tag/v0.1.0)).
+2. On the phone, allow install from unknown sources if prompted, then open the APK.
+3. Follow [Usage → Android](#android-cellular-bound-proxy) (hotspot + Start).
+
+The release APK is an **unsigned debug** build for sideload/testing — not Play Store signed.
+
+**Or build from source**
+
 2. Open the Gradle project:
 ```bash
 cd android
@@ -190,7 +201,22 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on every PR and on `main` / `fe
 | **Structure** | yes | Android tree present, no Gradle in Xcode, FGS/`connectedDevice`/cellular/SDK gates |
 | **iOS smoke** | soft | `xcodebuild -list` + best-effort unsigned simulator build |
 
-**CD (today):** green Android jobs publish `app-debug.apk` and JUnit reports as Actions artifacts (14-day retention). Store upload is not automated.
+**CI artifacts:** green Android jobs upload `app-debug.apk` and JUnit reports (14-day retention on the Actions run page). Useful for PR smoke installs; not a versioned release.
+
+**Releases (normal path):** push an annotated tag `vX.Y.Z` on `main`.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds the debug APK,
+runs unit tests, and creates a [GitHub Release](https://github.com/Nanako0129/SocksBypass/releases)
+with `app-debug.apk` attached.
+
+```bash
+# from a clean main tip that already passed CI
+git checkout main && git pull
+git tag -a v0.2.0 -m "v0.2.0 — short summary"
+git push origin v0.2.0
+# → Actions “Release” job → https://github.com/Nanako0129/SocksBypass/releases
+```
+
+Store upload (Play / App Store) is intentionally not automated here.
 
 Details: [`.github/workflows/ci-docs.md`](.github/workflows/ci-docs.md).
 
@@ -333,6 +359,14 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 
 ## 安裝說明
 
+### Android（建議）
+
+從 [Releases](https://github.com/Nanako0129/SocksBypass/releases) 下載最新 `app-debug.apk`
+（例如 [v0.1.0](https://github.com/Nanako0129/SocksBypass/releases/tag/v0.1.0)），在手機上允許未知來源後安裝。
+這是**未簽名 debug 包**，僅供側載測試。開啟個人熱點 → app 內 Start → 客戶端 SOCKS5 指向顯示的 IP:9876。
+
+### iOS / 從原始碼建置
+
 1. Clone 專案：
 ```bash
 git clone https://github.com/Nanako0129/SocksBypass.git
@@ -347,6 +381,9 @@ git clone https://github.com/Nanako0129/SocksBypass.git
 - 將 iOS 裝置連接到電腦
 - 在 Xcode 中選擇你的裝置
 - 執行
+
+Android 原始碼建置：`cd android && ./gradlew :app:assembleDebug`，再
+`adb install -r app/build/outputs/apk/debug/app-debug.apk`。
 
 ## 使用方法
 
