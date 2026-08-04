@@ -584,6 +584,15 @@ private final class RelaySession {
     /// (ordinary dual-stack/IPv4 networks, or a lookup failure) — that
     /// reproduces exactly the pre-existing direct-dial behavior, so this
     /// only changes anything on a network where the literal had no route.
+    ///
+    /// getaddrinfo() on a numeric IPv4 string can return more than one
+    /// result: the trivial AF_INET parse of the literal itself alongside a
+    /// synthesized AF_INET6 entry, in no guaranteed order — an IPv6-only
+    /// network was seen returning the AF_INET one first. Looking at only
+    /// `result` (the first entry) silently fell back to the literal every
+    /// time on such a network, i.e. this never actually did anything. Scan
+    /// every entry and prefer whichever one is AF_INET6, matching how
+    /// UdpAssociation.resolve() already walks the whole list.
     private static func synthesizedHost(for literal: String) -> NWEndpoint.Host {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
@@ -597,16 +606,20 @@ private final class RelaySession {
         }
         defer { Darwin.freeaddrinfo(first) }
 
-        guard first.pointee.ai_family == AF_INET6, let raw = first.pointee.ai_addr else {
-            return NWEndpoint.Host(literal)
+        var item: UnsafeMutablePointer<addrinfo>? = first
+        while let current = item {
+            let info = current.pointee
+            if info.ai_family == AF_INET6, let raw = info.ai_addr {
+                var address = sockaddr_in6()
+                memcpy(&address, raw, MemoryLayout<sockaddr_in6>.size)
+                let bytes = withUnsafeBytes(of: &address.sin6_addr) { Data($0) }
+                if let synthesized = IPv6Address(bytes) {
+                    return .ipv6(synthesized)
+                }
+            }
+            item = info.ai_next
         }
-        var address = sockaddr_in6()
-        memcpy(&address, raw, MemoryLayout<sockaddr_in6>.size)
-        let bytes = withUnsafeBytes(of: &address.sin6_addr) { Data($0) }
-        guard let synthesized = IPv6Address(bytes) else {
-            return NWEndpoint.Host(literal)
-        }
-        return .ipv6(synthesized)
+        return NWEndpoint.Host(literal)
     }
 
     /// The local address the outbound connection actually bound to, for BND.ADDR
