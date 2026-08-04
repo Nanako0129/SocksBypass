@@ -189,6 +189,11 @@ final class UdpAssociation {
     private var closed = false
     private var clientAddress: SocketAddress?
     private let controlPeer: SocketAddress?
+    /// Whether a datagram has ever been confirmed on the current
+    /// `clientAddress`. Gates the declared-endpoint correction below: once
+    /// real traffic has used an endpoint, a mismatched sender goes back to
+    /// being treated as peer traffic rather than re-latching.
+    private var hasReceivedClientTraffic = false
     private var resolutions: [String: Resolution] = [:]
     /// Insertion order, so the cache can be evicted without a second index.
     private var resolutionOrder: [String] = []
@@ -337,6 +342,22 @@ final class UdpAssociation {
         if let clientAddress {
             if sourceAddress.matches(clientAddress) {
                 handleClientDatagram(packet)
+            } else if !hasReceivedClientTraffic,
+                      let controlPeer, sourceAddress.matchesHost(controlPeer),
+                      DatagramHeader.decode(packet) != nil {
+                // The UDP ASSOCIATE request declared a port up front, but some
+                // clients advertise a placeholder or a stale port rather than
+                // 0.0.0.0:0 — nothing has actually confirmed that declaration
+                // yet, so a well-formed datagram from the same host is far more
+                // likely the real client correcting it than an attacker. Without
+                // this, every datagram from that client is silently misfiled as
+                // a "peer reply" forever: the client's own SOCKS5 UDP forever
+                // gets echoed back to the wrong port and never reaches anything.
+                // Once real traffic has used an endpoint this no longer applies,
+                // matching the same same-host race the no-declaration path below
+                // already accepts.
+                self.clientAddress = sourceAddress
+                handleClientDatagram(packet)
             } else {
                 // There is intentionally no destination/NAT table. Every datagram
                 // from a non-client source is a peer payload and is wrapped verbatim
@@ -361,16 +382,24 @@ final class UdpAssociation {
     private func handleClientDatagram(_ packet: Data) {
         assertQueue()
         guard !closed, let decoded = DatagramHeader.decode(packet) else { return }
+        hasReceivedClientTraffic = true
 
         switch decoded.header.addressType {
-        case .ipv4, .ipv6:
+        case .ipv6:
             guard let destination = Self.numericAddress(
                 decoded.header.address,
                 port: decoded.header.port
             ) else { return }
             _ = send(decoded.payload, to: destination, direction: .upload)
 
-        case .domain:
+        case .ipv4, .domain:
+            // inet_pton (used by the .ipv6 path above) never synthesizes a NAT64
+            // address for an IPv4 literal; only getaddrinfo does, the same way it
+            // does for a hostname. On an IPv6-only network that difference is the
+            // whole story: numericAddress() would hand back an unroutable
+            // ::ffff:-mapped address and every datagram to it silently vanishes.
+            // Folding .ipv4 into the domain cache below gets it the same
+            // getaddrinfo() call .domain already makes.
             let key = decoded.header.address.lowercased()
             switch resolutions[key] {
             case .resolved(let destinations):

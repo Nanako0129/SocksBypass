@@ -159,6 +159,53 @@ final class UdpAssociationTests: XCTestCase {
         XCTAssertNil(stranger.receive(), "and must receive nothing back")
     }
 
+    /// Bug found via a real device (Discord voice over an IPv6-only hotspot,
+    /// Shadowrocket as the SOCKS5 client): the client declared a DST.PORT in
+    /// its UDP ASSOCIATE request that didn't match the port it actually sent
+    /// from. Every real datagram then failed the exact-address match against
+    /// the pre-latched (wrong) endpoint and was silently misfiled as "peer"
+    /// traffic — echoed back to the wrong port and never forwarded upstream —
+    /// so the client's own SOCKS5 UDP never reached anything, forever.
+    func testDeclaredEndpointWrongPortStillLatchesRealClient() throws {
+        let queue = DispatchQueue(label: "UdpAssociationTests.wrongDeclaredPort")
+        let counters = TrafficCounters(queue: queue, enabled: true)
+        let echo = try UdpTestSocket(family: AF_INET)
+        let realClient = try UdpTestSocket(family: AF_INET)
+        let association = try queue.sync {
+            try UdpAssociation(
+                queue: queue,
+                counters: counters,
+                localAddress: "127.0.0.1",
+                controlPeerAddress: "127.0.0.1",
+                // Deliberately wrong: some SOCKS5 clients advertise a stale or
+                // placeholder port rather than 0.0.0.0:0, and realClient's
+                // actual port is guaranteed not to be this one.
+                declaredClientEndpoint: (address: "127.0.0.1", port: 1),
+                onFailure: {}
+            )
+        }
+        defer { queue.sync { association.cancel() } }
+
+        let packet = try XCTUnwrap(
+            UdpAssociation.DatagramHeader.encode(
+                addressType: .ipv4, address: "127.0.0.1", port: echo.port, payload: Data([7, 7, 7])
+            )
+        )
+        XCTAssertTrue(realClient.send(packet, host: "127.0.0.1", port: association.localPort))
+        let echoed = try XCTUnwrap(echo.receiveAndEcho(), "the real client's datagram must still reach upstream")
+        XCTAssertEqual(echoed, Data([7, 7, 7]))
+        let reply = try XCTUnwrap(realClient.receive())
+        XCTAssertEqual(UdpAssociation.DatagramHeader.decode(reply)?.payload, Data([7, 7, 7]))
+
+        // Once real traffic has used an endpoint, a second same-host source must
+        // go back to being treated as peer traffic, same as the no-declaration
+        // path: the correction window is one-shot, not a standing exception.
+        let stranger = try UdpTestSocket(family: AF_INET)
+        XCTAssertTrue(stranger.send(packet, host: "127.0.0.1", port: association.localPort))
+        XCTAssertNil(echo.receiveAndEcho(timeout: 0.2))
+        XCTAssertNil(stranger.receive(timeout: 0.2))
+    }
+
     /// Review finding: getaddrinfo AF_INET results were cached as sockaddr_in and
     /// then rejected by the dual-stack socket, so A-only names silently dropped
     /// every datagram. "127.0.0.1" as a domain resolves to IPv4 only.
