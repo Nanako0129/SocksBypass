@@ -363,14 +363,21 @@ final class UdpAssociation {
         guard !closed, let decoded = DatagramHeader.decode(packet) else { return }
 
         switch decoded.header.addressType {
-        case .ipv4, .ipv6:
+        case .ipv6:
             guard let destination = Self.numericAddress(
                 decoded.header.address,
                 port: decoded.header.port
             ) else { return }
             _ = send(decoded.payload, to: destination, direction: .upload)
 
-        case .domain:
+        case .ipv4, .domain:
+            // inet_pton (used by the .ipv6 path above) never synthesizes a NAT64
+            // address for an IPv4 literal; only getaddrinfo does, the same way it
+            // does for a hostname. On an IPv6-only network that difference is the
+            // whole story: numericAddress() would hand back an unroutable
+            // ::ffff:-mapped address and every datagram to it silently vanishes.
+            // Folding .ipv4 into the domain cache below gets it the same
+            // getaddrinfo() call .domain already makes.
             let key = decoded.header.address.lowercased()
             switch resolutions[key] {
             case .resolved(let destinations):
