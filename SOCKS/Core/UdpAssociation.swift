@@ -189,15 +189,11 @@ final class UdpAssociation {
     private var closed = false
     private var clientAddress: SocketAddress?
     private let controlPeer: SocketAddress?
-    /// Pure counts, no addresses or payload — how many datagrams from the
-    /// client were recognized and processed, how many reply datagrams came
-    /// back from a peer, and how many arrivals before the client address
-    /// latched didn't match the control peer and were dropped. Diagnoses
-    /// "never relayed anything" vs. "relayed but never got a reply" without
-    /// exposing any traffic content.
-    private(set) var uploadedDatagramCount = 0
-    private(set) var downloadedDatagramCount = 0
-    private(set) var preLatchRejectedCount = 0
+    /// Whether a datagram has ever been confirmed on the current
+    /// `clientAddress`. Gates the declared-endpoint correction below: once
+    /// real traffic has used an endpoint, a mismatched sender goes back to
+    /// being treated as peer traffic rather than re-latching.
+    private var hasReceivedClientTraffic = false
     private var resolutions: [String: Resolution] = [:]
     /// Insertion order, so the cache can be evicted without a second index.
     private var resolutionOrder: [String] = []
@@ -346,7 +342,7 @@ final class UdpAssociation {
         if let clientAddress {
             if sourceAddress.matches(clientAddress) {
                 handleClientDatagram(packet)
-            } else if uploadedDatagramCount == 0,
+            } else if !hasReceivedClientTraffic,
                       let controlPeer, sourceAddress.matchesHost(controlPeer),
                       DatagramHeader.decode(packet) != nil {
                 // The UDP ASSOCIATE request declared a port up front, but some
@@ -376,7 +372,6 @@ final class UdpAssociation {
             // and receive the real client's payload as if it were peer traffic.
             guard let controlPeer, sourceAddress.matchesHost(controlPeer),
                   DatagramHeader.decode(packet) != nil else {
-                preLatchRejectedCount += 1
                 return
             }
             clientAddress = sourceAddress
@@ -387,7 +382,7 @@ final class UdpAssociation {
     private func handleClientDatagram(_ packet: Data) {
         assertQueue()
         guard !closed, let decoded = DatagramHeader.decode(packet) else { return }
-        uploadedDatagramCount += 1
+        hasReceivedClientTraffic = true
 
         switch decoded.header.addressType {
         case .ipv6:
@@ -492,7 +487,6 @@ final class UdpAssociation {
               ) else {
             return
         }
-        downloadedDatagramCount += 1
         _ = send(packet, to: clientAddress, direction: .download, committedBytes: payload.count)
     }
 
