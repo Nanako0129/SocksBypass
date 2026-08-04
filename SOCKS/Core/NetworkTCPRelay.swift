@@ -12,6 +12,11 @@ final class NetworkTCPRelay {
         case connectRejected(reply: UInt8)
         case udpAssociated
         case udpAssociateFailed
+        /// Pure counts, no addresses or payload: how many datagrams from the
+        /// client this association ever recognized, how many reply datagrams
+        /// came back from a peer, and how many arrivals before the client
+        /// address latched didn't match the control peer and were dropped.
+        case udpAssociateClosed(uploaded: Int, downloaded: Int, preLatchRejected: Int)
         /// The listener died after it had already reported success. The start
         /// callback fires once, so without this the shell keeps showing a
         /// listening endpoint for a relay that stopped serving.
@@ -1030,9 +1035,14 @@ private final class RelaySession {
         target?.stateUpdateHandler = nil
         client.cancel()
         target?.cancel()
-        if udpAssociation != nil {
-            udpAssociation?.cancel()
-            udpAssociation = nil
+        if let udpAssociation {
+            emit(.udpAssociateClosed(
+                uploaded: udpAssociation.uploadedDatagramCount,
+                downloaded: udpAssociation.downloadedDatagramCount,
+                preLatchRejected: udpAssociation.preLatchRejectedCount
+            ))
+            udpAssociation.cancel()
+            self.udpAssociation = nil
             counters.associationClosed(id)
         }
         if active {

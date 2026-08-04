@@ -117,6 +117,8 @@ final class RelayViewModel: ObservableObject {
         case .connectRejected(let reply): return String(format: "CONNECT rejected 0x%02x", reply)
         case .udpAssociated: return "UDP ASSOCIATE established"
         case .udpAssociateFailed: return "UDP ASSOCIATE failed"
+        case .udpAssociateClosed(let uploaded, let downloaded, let preLatchRejected):
+            return "UDP ASSOCIATE closed (up: \(uploaded), down: \(downloaded), pre-latch rejected: \(preLatchRejected))"
         case .listenerFailed: return "listener failed — no longer accepting connections"
         }
     }
