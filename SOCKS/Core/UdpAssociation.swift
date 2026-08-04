@@ -346,6 +346,22 @@ final class UdpAssociation {
         if let clientAddress {
             if sourceAddress.matches(clientAddress) {
                 handleClientDatagram(packet)
+            } else if uploadedDatagramCount == 0,
+                      let controlPeer, sourceAddress.matchesHost(controlPeer),
+                      DatagramHeader.decode(packet) != nil {
+                // The UDP ASSOCIATE request declared a port up front, but some
+                // clients advertise a placeholder or a stale port rather than
+                // 0.0.0.0:0 — nothing has actually confirmed that declaration
+                // yet, so a well-formed datagram from the same host is far more
+                // likely the real client correcting it than an attacker. Without
+                // this, every datagram from that client is silently misfiled as
+                // a "peer reply" forever: the client's own SOCKS5 UDP forever
+                // gets echoed back to the wrong port and never reaches anything.
+                // Once real traffic has used an endpoint this no longer applies,
+                // matching the same same-host race the no-declaration path below
+                // already accepts.
+                self.clientAddress = sourceAddress
+                handleClientDatagram(packet)
             } else {
                 // There is intentionally no destination/NAT table. Every datagram
                 // from a non-client source is a peer payload and is wrapped verbatim
