@@ -172,6 +172,13 @@ final class UdpAssociation {
             }
             return bytes[8..<24] == other.bytes[8..<24]
         }
+
+        /// The 16 raw address bytes alone, port and everything else stripped —
+        /// a stable key for host-only lookups.
+        var hostBytes: Data {
+            guard bytes.count >= 24 else { return Data() }
+            return bytes[8..<24]
+        }
     }
 
     private enum Resolution {
@@ -197,6 +204,21 @@ final class UdpAssociation {
     private var resolutions: [String: Resolution] = [:]
     /// Insertion order, so the cache can be evicted without a second index.
     private var resolutionOrder: [String] = []
+    /// Reverse of the above, ATYP IPv4 requests only: resolved destination
+    /// host bytes back to the literal the client actually addressed it as.
+    ///
+    /// A client that supplies a literal IPv4 target did its own resolution
+    /// and expects replies to appear to come from exactly that literal. When
+    /// the real send has to go out over a NAT64-synthesized address instead
+    /// (an IPv6-only network, no route for the literal itself), a reply's
+    /// source is that synthesized address, not the literal — reporting it
+    /// as-is hands the client a SOCKS5 UDP header whose source doesn't match
+    /// anything it dialed. A client tracking flows by that literal (seen on
+    /// tun2socks: "symmetric NAT ... drop packet from [64:ff9b::...]")
+    /// rejects the reply outright. This maps the observed source back to
+    /// what the client actually asked for.
+    private var literalIPv4ByDestinationHost: [Data: String] = [:]
+    private var literalIPv4Order: [Data] = []
     private var pendingResolutions = 0
     /// At most one datagram per in-flight lookup, replayed once it resolves.
     private var pendingDatagrams: [String: (payload: Data, port: UInt16)] = [:]
@@ -446,6 +468,9 @@ final class UdpAssociation {
                             return
                         }
                         self.resolutions[key] = .resolved(result)
+                        if decoded.header.addressType == .ipv4 {
+                            self.rememberLiteralIPv4(key, for: result)
+                        }
                         guard let queued else { return }
                         for destination in result
                         where self.send(queued.payload, to: destination.withPort(queued.port),
@@ -475,10 +500,41 @@ final class UdpAssociation {
         }
     }
 
+    /// Records, for each resolved destination, the literal IPv4 the client
+    /// addressed it as — so a reply arriving from a NAT64-synthesized address
+    /// can still be reported to the client as the address it actually dialed.
+    /// Bounded the same way the resolution cache is: this can only grow at
+    /// the same rate `resolutions` does, since every entry here traces back
+    /// to one ATYP IPv4 resolution.
+    private func rememberLiteralIPv4(_ literal: String, for destinations: [SocketAddress]) {
+        assertQueue()
+        for destination in destinations {
+            let hostKey = destination.hostBytes
+            guard !hostKey.isEmpty, literalIPv4ByDestinationHost[hostKey] == nil else { continue }
+            literalIPv4ByDestinationHost[hostKey] = literal
+            literalIPv4Order.append(hostKey)
+        }
+        while literalIPv4ByDestinationHost.count > Self.resolutionCacheLimit, !literalIPv4Order.isEmpty {
+            let oldest = literalIPv4Order.removeFirst()
+            literalIPv4ByDestinationHost.removeValue(forKey: oldest)
+        }
+    }
+
     private func handlePeerDatagram(_ payload: Data, from sourceAddress: SocketAddress) {
         assertQueue()
-        guard !closed, let clientAddress,
-              let (addressType, address) = Self.headerAddress(sourceAddress),
+        guard !closed, let clientAddress else { return }
+
+        // If this peer is answering a literal IPv4 the client dialed, report it
+        // back as that literal even though the real send went out over a
+        // NAT64-synthesized address — see literalIPv4ByDestinationHost.
+        let resolvedAddress: (AddressType, String)?
+        if let literal = literalIPv4ByDestinationHost[sourceAddress.hostBytes] {
+            resolvedAddress = (.ipv4, literal)
+        } else {
+            resolvedAddress = Self.headerAddress(sourceAddress)
+        }
+
+        guard let (addressType, address) = resolvedAddress,
               let packet = DatagramHeader.encode(
                 addressType: addressType,
                 address: address,
