@@ -61,11 +61,11 @@ network you do not control.
 - Android Studio or command-line SDK 36 + JDK 17
 - A phone with **mobile data** and the ability to open a **personal hotspot**
 
-## Screenshot
+## Screenshots
 
-<p align="center">
-    <img src="docs/screenshot.png" alt="screenshot" width="320">
-</p>
+| iOS | Android |
+| :-: | :-: |
+| <img src="docs/screenshot.png" alt="iOS app" width="280"> | <img src="docs/android/ui-main.png" alt="Android app" width="280"> |
 
 ## Installation
 
@@ -359,9 +359,9 @@ SOCKS5 core has since been rewritten in Swift and no longer contains microsocks.
 
 ## 截圖
 
-<p align="center">
-    <img src="docs/screenshot.png" alt="screenshot" width="320">
-</p>
+| iOS | Android |
+| :-: | :-: |
+| <img src="docs/screenshot.png" alt="iOS app" width="280"> | <img src="docs/android/ui-main.png" alt="Android app" width="280"> |
 
 ## 安裝說明
 
