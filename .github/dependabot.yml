@@ -1,4 +1,6 @@
 # Keep Actions and Gradle plugins from rotting.
+# AndroidX / Kotlin major-or-platform jumps often need a coordinated AGP +
+# compileSdk upgrade; group related bumps and ignore known breakers until then.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -12,3 +14,26 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    groups:
+      # Avoid half-upgrades like kotlin.jvm alone vs kotlin.android / compose.
+      kotlin-plugins:
+        patterns:
+          - "org.jetbrains.kotlin.*"
+      # One PR for lifecycle-runtime-ktx / viewmodel-compose / runtime-compose.
+      androidx-lifecycle:
+        patterns:
+          - "androidx.lifecycle*"
+    ignore:
+      # core-ktx ≥ ~1.17/1.19 needs compileSdk 37 + AGP ≥ 9.1 (see closed #20).
+      # Revisit after the Android platform upgrade PR lands.
+      - dependency-name: "androidx.core:core-ktx"
+        versions: [">=1.17.0"]
+      - dependency-name: "androidx.core:core"
+        versions: [">=1.17.0"]
+      # lifecycle 2.11.x same AGP/SDK floor (see closed #14 / #24 / #26).
+      - dependency-name: "androidx.lifecycle*"
+        versions: [">=2.10.0"]
+      # Kotlin 2.4+ rejects kotlinOptions.jvmTarget string DSL and must move
+      # android + jvm + compose together (see closed #23 / #25).
+      - dependency-name: "org.jetbrains.kotlin.*"
+        versions: [">=2.1.0"]
