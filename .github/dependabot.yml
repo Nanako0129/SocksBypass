@@ -19,6 +19,10 @@ updates:
       kotlin-plugins:
         patterns:
           - "org.jetbrains.kotlin.*"
+      # core / android / test must move together (see closed #31 / #34).
+      kotlinx-coroutines:
+        patterns:
+          - "org.jetbrains.kotlinx:kotlinx-coroutines*"
       # One PR for lifecycle-runtime-ktx / viewmodel-compose / runtime-compose.
       androidx-lifecycle:
         patterns:
@@ -37,3 +41,10 @@ updates:
       # android + jvm + compose together (see closed #23 / #25).
       - dependency-name: "org.jetbrains.kotlin.*"
         versions: [">=2.1.0"]
+      # coroutines 1.11+ ships Kotlin 2.2 metadata; blocked on Kotlin 2.0.21
+      # (see closed #31 / #34). Unblock with Kotlin train.
+      - dependency-name: "org.jetbrains.kotlinx:kotlinx-coroutines*"
+        versions: [">=1.11.0"]
+      # Gradle 9 is AGP 9 territory; stay on 8.11.x with AGP 8.10 (see #15 / #32).
+      - dependency-name: "gradle"
+        versions: [">=9.0.0"]
