@@ -293,6 +293,11 @@ phone hotspot before Start (station Wi‑Fi alone is not offered for bind).
   is gitignored and no XCFramework is committed, so run
   `scripts/build-hev-xcframework.sh` first or the link step fails. Debug and
   Release need nothing extra — they exclude the bridge entirely.
+- The build script needs a full Xcode install selected via `xcode-select`, not
+  just the Command Line Tools — it links `iphoneos`/`iphonesimulator` SDKs
+  that the standalone CLT package doesn't ship. If it fails with `xcrun:
+  error: SDK "iphoneos" cannot be located`, run
+  `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` first.
 - **Engine / binary PRs:** shipping iOS stays on the native Swift SOCKS core;
   Android on the Kotlin path under `android/`. PRs that swap the production
   engine for a vendored binary need a short design note, a **reproducible**
