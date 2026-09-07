@@ -48,3 +48,11 @@ updates:
       # Gradle 9 is AGP 9 territory; stay on 8.11.x with AGP 8.10 (see #15 / #32).
       - dependency-name: "gradle"
         versions: [">=9.0.0"]
+      # AGP 9.x requires Gradle 9 and compileSdk 37+; stay on 8.10.x until coordinated upgrade (see closed #40).
+      - dependency-name: "com.android.application"
+        versions: [">=9.0.0"]
+      - dependency-name: "com.android.tools.build:gradle*"
+        versions: [">=9.0.0"]
+      # Compose BOM ≥ 2026.07 (e.g. 2026.08.00) brings Compose 1.12+ requiring compileSdk 37 (see closed #39).
+      - dependency-name: "androidx.compose:compose-bom"
+        versions: [">=2026.07.00"]
