@@ -208,6 +208,18 @@ final class NetworkTCPRelay {
         completions.forEach { $0() }
     }
 
+    /// Global unicast IPv4: not 0/8, 10/8, 100.64/10, 127/8, 169.254/16,
+    /// 172.16/12, 192.168/16, 224/4 (multicast) or 240/4 (reserved, broadcast).
+    static func isGlobalUnicast(_ address: IPv4Address) -> Bool {
+        let b = [UInt8](address.rawValue)
+        switch (b[0], b[1]) {
+        case (0, _), (10, _), (127, _), (169, 254), (192, 168): return false
+        case (100, 64...127), (172, 16...31): return false
+        case (224..., _): return false
+        default: return true
+        }
+    }
+
     fileprivate static func makeTCPParameters() -> NWParameters {
         let options = NWProtocolTCP.Options()
         options.noDelay = true
@@ -526,28 +538,36 @@ private final class RelaySession {
         // IPv4 address (as opposed to a domain) would otherwise dial an
         // address the interface has no route for. getaddrinfo() performs the
         // same synthesis for a numeric string as it does for a hostname, so
-        // route a literal through it before handing Network.framework a host.
-        guard IPv4Address(request.target.address) != nil else {
-            connectTarget(host: NWEndpoint.Host(request.target.address), port: port)
+        // route a global literal through it before handing Network.framework a
+        // host. Non-global literals are dialed as-is: NAT64 does not translate
+        // them, and on a hotspot the LAN side has a direct IPv4 route.
+        let literal = request.target.address
+        guard let ipv4 = IPv4Address(literal), NetworkTCPRelay.isGlobalUnicast(ipv4) else {
+            connectTarget(host: NWEndpoint.Host(literal), port: port)
             return
         }
 
-        let address = request.target.address
+        // Exactly one dial per CONNECT: whichever of the timeout and the lookup
+        // completion runs first claims `synthesisTimeout` (sets it nil) and dials;
+        // the other finds it nil and returns. cleanup() nils it too, so a late
+        // completion after teardown is a no-op.
         let timeout = DispatchWorkItem { [weak self] in
-            guard let self, !self.cleaned, self.target == nil else { return }
+            guard let self, self.synthesisTimeout != nil else { return }
             self.synthesisTimeout = nil
-            self.sendRequestFailure(0x04)
+            // A slow lookup must not fail the CONNECT: dial the literal, which is
+            // exactly what happened before synthesis existed.
+            self.connectTarget(host: .ipv4(ipv4), port: port)
         }
         synthesisTimeout = timeout
-        queue.asyncAfter(deadline: .now() + 5, execute: timeout)
+        queue.asyncAfter(deadline: .now() + Self.synthesisTimeoutSeconds, execute: timeout)
 
-        Self.synthesisQueue.async { [weak self] in
-            let host = Self.synthesizedHost(for: address)
+        // Off the relay queue: getaddrinfo() blocks and every session shares that
+        // queue. A concurrent queue, so one stalled lookup cannot hold up others.
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let host = Self.synthesizedHost(for: literal) ?? .ipv4(ipv4)
             self?.queue.async {
                 guard let self else { return }
                 self.assertQueue()
-                // Already fired (or the session moved on) — don't also start a
-                // connection past that point.
                 guard let pending = self.synthesisTimeout else { return }
                 pending.cancel()
                 self.synthesisTimeout = nil
@@ -555,6 +575,11 @@ private final class RelaySession {
             }
         }
     }
+
+    /// getaddrinfo() on a numeric IPv4 string answers in microseconds unless
+    /// NAT64 prefix discovery is still running; this only bounds that case.
+    private static let synthesisTimeoutSeconds: Double = 2
+
 
     private func connectTarget(host: NWEndpoint.Host, port: NWEndpoint.Port) {
         assertQueue()
@@ -572,54 +597,17 @@ private final class RelaySession {
         target.start(queue: queue)
     }
 
-    /// Off the relay queue: getaddrinfo() is a blocking syscall and every
-    /// session shares that queue, so resolving on it would stall unrelated
-    /// connections for the DNS/synthesis round trip.
-    private static let synthesisQueue = DispatchQueue(
-        label: "com.nanako.socksbypass.benchmark.relay.tcp-synthesis",
-        qos: .utility
-    )
-
-    /// Falls back to the plain literal wherever synthesis doesn't apply
-    /// (ordinary dual-stack/IPv4 networks, or a lookup failure) — that
-    /// reproduces exactly the pre-existing direct-dial behavior, so this
-    /// only changes anything on a network where the literal had no route.
-    ///
-    /// getaddrinfo() on a numeric IPv4 string can return more than one
-    /// result: the trivial AF_INET parse of the literal itself alongside a
-    /// synthesized AF_INET6 entry, in no guaranteed order — an IPv6-only
-    /// network was seen returning the AF_INET one first. Looking at only
-    /// `result` (the first entry) silently fell back to the literal every
-    /// time on such a network, i.e. this never actually did anything. Scan
-    /// every entry and prefer whichever one is AF_INET6, matching how
-    /// UdpAssociation.resolve() already walks the whole list.
-    private static func synthesizedHost(for literal: String) -> NWEndpoint.Host {
-        var hints = addrinfo()
-        hints.ai_family = AF_UNSPEC
-        hints.ai_socktype = SOCK_STREAM
-        hints.ai_protocol = IPPROTO_TCP
-
-        var result: UnsafeMutablePointer<addrinfo>?
-        let status = literal.withCString { Darwin.getaddrinfo($0, nil, &hints, &result) }
-        guard status == 0, let first = result else {
-            return NWEndpoint.Host(literal)
-        }
-        defer { Darwin.freeaddrinfo(first) }
-
-        var item: UnsafeMutablePointer<addrinfo>? = first
-        while let current = item {
-            let info = current.pointee
-            if info.ai_family == AF_INET6, let raw = info.ai_addr {
-                var address = sockaddr_in6()
-                memcpy(&address, raw, MemoryLayout<sockaddr_in6>.size)
-                let bytes = withUnsafeBytes(of: &address.sin6_addr) { Data($0) }
-                if let synthesized = IPv6Address(bytes) {
-                    return .ipv6(synthesized)
-                }
-            }
-            item = info.ai_next
-        }
-        return NWEndpoint.Host(literal)
+    /// The NAT64-synthesized IPv6 address getaddrinfo() returns for an IPv4
+    /// literal, or nil where synthesis doesn't apply (dual-stack/IPv4 networks,
+    /// lookup failure); the caller then dials the literal, as before synthesis.
+    /// The result list carries the literal itself (as ::ffff:) alongside the
+    /// synthesized entry, in no guaranteed order: an IPv6-only network was seen
+    /// returning the IPv4 one first, so the whole list is searched.
+    private static func synthesizedHost(for literal: String) -> NWEndpoint.Host? {
+        UdpAssociation.resolve(literal)
+            .first { !$0.isIPv4Mapped }
+            .flatMap { IPv6Address($0.hostBytes) }
+            .map { .ipv6($0) }
     }
 
     /// The local address the outbound connection actually bound to, for BND.ADDR
