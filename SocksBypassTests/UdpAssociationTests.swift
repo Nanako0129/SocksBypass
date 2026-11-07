@@ -197,13 +197,128 @@ final class UdpAssociationTests: XCTestCase {
         let reply = try XCTUnwrap(realClient.receive())
         XCTAssertEqual(UdpAssociation.DatagramHeader.decode(reply)?.payload, Data([7, 7, 7]))
 
-        // Once real traffic has used an endpoint, a second same-host source must
-        // go back to being treated as peer traffic, same as the no-declaration
-        // path: the correction window is one-shot, not a standing exception.
+        // Discovery is one-shot: a second same-host source is peer traffic, same
+        // as the no-declaration path, not a standing exception.
         let stranger = try UdpTestSocket(family: AF_INET)
         XCTAssertTrue(stranger.send(packet, host: "127.0.0.1", port: association.localPort))
         XCTAssertNil(echo.receiveAndEcho(timeout: 0.2))
         XCTAssertNil(stranger.receive(timeout: 0.2))
+    }
+
+    /// PR #27 review: letting the first same-host sender re-latch reopened the
+    /// hijack for clients whose declared port is correct. A stranger that sends
+    /// first must lose the association as soon as the declared client sends, and
+    /// must never see the client's payload.
+    func testCorrectDeclaredClientWinsOverEarlierSameHostSender() throws {
+        let queue = DispatchQueue(label: "UdpAssociationTests.declaredWins")
+        let counters = TrafficCounters(queue: queue, enabled: true)
+        let echo = try UdpTestSocket(family: AF_INET)
+        let client = try UdpTestSocket(family: AF_INET)
+        let stranger = try UdpTestSocket(family: AF_INET)
+        let association = try makeDeclaredAssociation(queue: queue, counters: counters, declaredPort: client.port)
+        defer { queue.sync { association.cancel() } }
+
+        let strangerPacket = try envelope(to: echo.port, payload: Data([0x51]))
+        XCTAssertTrue(stranger.send(strangerPacket, host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0x51]), "before the client sends, discovery may latch")
+        XCTAssertNotNil(stranger.receive(), "and the stranger gets the reply to its own traffic")
+
+        let clientPacket = try envelope(to: echo.port, payload: Data([0xc1]))
+        XCTAssertTrue(client.send(clientPacket, host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0xc1]), "the declared client's datagram is client traffic")
+        let reply = try XCTUnwrap(client.receive(), "the reply goes to the declared client")
+        XCTAssertEqual(UdpAssociation.DatagramHeader.decode(reply)?.payload, Data([0xc1]))
+        XCTAssertNil(stranger.receive(timeout: 0.2), "the stranger must not see the client's traffic")
+    }
+
+    /// Once the declared client has sent, nothing else can latch: a same-host
+    /// stranger is peer traffic delivered to the client, and receives nothing.
+    func testConfirmedDeclaredClientCannotBeReLatched() throws {
+        let queue = DispatchQueue(label: "UdpAssociationTests.noReLatch")
+        let counters = TrafficCounters(queue: queue, enabled: true)
+        let echo = try UdpTestSocket(family: AF_INET)
+        let client = try UdpTestSocket(family: AF_INET)
+        let stranger = try UdpTestSocket(family: AF_INET)
+        let association = try makeDeclaredAssociation(queue: queue, counters: counters, declaredPort: client.port)
+        defer { queue.sync { association.cancel() } }
+
+        let first = try envelope(to: echo.port, payload: Data([0xc1]))
+        XCTAssertTrue(client.send(first, host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0xc1]))
+        XCTAssertNotNil(client.receive())
+
+        let strangerPacket = try envelope(to: echo.port, payload: Data([0x51]))
+        XCTAssertTrue(stranger.send(strangerPacket, host: "127.0.0.1", port: association.localPort))
+        XCTAssertNil(echo.receiveAndEcho(timeout: 0.2), "the stranger must not reach upstream as a client")
+        // Wrapped as a peer payload and delivered to the client.
+        XCTAssertNotNil(client.receive())
+
+        let second = try envelope(to: echo.port, payload: Data([0xc2]))
+        XCTAssertTrue(client.send(second, host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0xc2]))
+        let reply = try XCTUnwrap(client.receive(), "the reply to the client's second request reaches it")
+        XCTAssertEqual(UdpAssociation.DatagramHeader.decode(reply)?.payload, Data([0xc2]))
+        XCTAssertNil(stranger.receive(timeout: 0.2), "the stranger receives nothing at all")
+    }
+
+    /// Wrong declaration: the discovered client keeps the association until the
+    /// declared port sends a well-formed envelope; a malformed datagram from it
+    /// changes nothing. A well-formed one takes the association (the accepted
+    /// residual of "declared wins"), and the discovered client becomes a peer.
+    func testWrongDeclarationDiscoveredClientUntilDeclaredPortSends() throws {
+        let queue = DispatchQueue(label: "UdpAssociationTests.declaredLater")
+        let counters = TrafficCounters(queue: queue, enabled: true)
+        let echo = try UdpTestSocket(family: AF_INET)
+        let declaredPortOwner = try UdpTestSocket(family: AF_INET)
+        let discovered = try UdpTestSocket(family: AF_INET)
+        let association = try makeDeclaredAssociation(
+            queue: queue, counters: counters, declaredPort: declaredPortOwner.port
+        )
+        defer { queue.sync { association.cancel() } }
+
+        let first = try envelope(to: echo.port, payload: Data([0xd1]))
+        XCTAssertTrue(discovered.send(first, host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0xd1]))
+        XCTAssertNotNil(discovered.receive())
+
+        let malformed = Data([0, 0, 1, 1, 127, 0, 0, 1, 0, 53, 0xaa])
+        XCTAssertTrue(declaredPortOwner.send(malformed, host: "127.0.0.1", port: association.localPort))
+        // Peer traffic, wrapped and delivered to the discovered client.
+        XCTAssertNotNil(discovered.receive())
+        let second = try envelope(to: echo.port, payload: Data([0xd2]))
+        XCTAssertTrue(discovered.send(second, host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0xd2]), "a malformed datagram must not take the association")
+        XCTAssertNotNil(discovered.receive())
+        XCTAssertNil(declaredPortOwner.receive(timeout: 0.2))
+
+        let claim = try envelope(to: echo.port, payload: Data([0xe1]))
+        XCTAssertTrue(declaredPortOwner.send(claim, host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0xe1]))
+        XCTAssertNotNil(declaredPortOwner.receive())
+        let third = try envelope(to: echo.port, payload: Data([0xd3]))
+        XCTAssertTrue(discovered.send(third, host: "127.0.0.1", port: association.localPort))
+        XCTAssertNil(echo.receiveAndEcho(timeout: 0.2), "after the declared port claims it, the discovered one is a peer")
+    }
+
+    private func makeDeclaredAssociation(
+        queue: DispatchQueue, counters: TrafficCounters, declaredPort: UInt16
+    ) throws -> UdpAssociation {
+        try queue.sync {
+            try UdpAssociation(
+                queue: queue,
+                counters: counters,
+                localAddress: "127.0.0.1",
+                controlPeerAddress: "127.0.0.1",
+                declaredClientEndpoint: (address: "127.0.0.1", port: declaredPort),
+                onFailure: {}
+            )
+        }
+    }
+
+    private func envelope(to port: UInt16, payload: Data) throws -> Data {
+        try XCTUnwrap(
+            UdpAssociation.DatagramHeader.encode(addressType: .ipv4, address: "127.0.0.1", port: port, payload: payload)
+        )
     }
 
     /// Review finding: getaddrinfo AF_INET results were cached as sockaddr_in and
