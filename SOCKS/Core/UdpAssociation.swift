@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import Network
 
 /// The one UDP socket owned by a SOCKS5 UDP ASSOCIATE control connection.
 ///
@@ -200,7 +201,6 @@ final class UdpAssociation {
     private enum Resolution {
         case pending
         case resolved([SocketAddress])
-        case failed
     }
 
     private let queue: DispatchQueue
@@ -387,8 +387,11 @@ final class UdpAssociation {
         // Role is decided by source address. The envelope is inspected only as a
         // precondition for *becoming* the client (rules 1 and 3), never to decide
         // whether a sender that is not the client is a peer.
-        if let declaredClient, sourceAddress.matchesHostAndPort(declaredClient),
-           declaredConfirmed || DatagramHeader.decode(packet) != nil {
+        if let declaredClient, sourceAddress.matchesHostAndPort(declaredClient) {
+            // Never peer traffic, even before it confirms: forwarding it as a peer
+            // payload would hand it to whoever discovery latched. A datagram that
+            // doesn't decode (FRAG != 0, malformed) is dropped, as for any client.
+            guard declaredConfirmed || DatagramHeader.decode(packet) != nil else { return }
             // Rule 1: the declared endpoint wins whenever it actually sends, even
             // over an earlier discovery latch, so a correct declaration keeps the
             // guarantee that a same-host stranger never receives the client's
@@ -414,9 +417,13 @@ final class UdpAssociation {
             // port take over and receive the real client's payload as peer traffic.
             // This also covers clients that declare a port they never send from
             // (seen with Shadowrocket): without it every datagram they send is
-            // misfiled as a peer reply and never reaches upstream. Before the
-            // declared endpoint sends, a same-host stranger can use the association
-            // this way; it only ever receives replies to its own traffic.
+            // misfiled as a peer reply and never reaches upstream. With a correct
+            // declaration, a same-host stranger that latches first holds the
+            // association only until the declared client sends (rule 1) and never
+            // receives that client's datagrams. With a wrong or missing declaration
+            // a stranger that sends first takes the client role and receives the
+            // real client's traffic as peer payload: the same race main has always
+            // accepted for undeclared clients.
             discoveryUsed = true
             clientAddress = sourceAddress
             handleClientDatagram(packet)
@@ -453,14 +460,20 @@ final class UdpAssociation {
             let key = "ipv4:" + address
             if case .resolved(let destinations) = resolutions[key] {
                 if sendToFirst(decoded.payload, destinations, port: port) { return }
+                // A full buffer or an oversized datagram says nothing about the
+                // route; drop this datagram and keep the entry and its reply labels.
+                if Self.isLocalSendError(errno) { return }
                 // Every synthesized address failed: the network changed under the
                 // association. Drop the entry and its reply labels, try mapped.
                 forgetResolution(key)
             }
-            if let mapped = Self.numericAddress(address, port: port),
-               send(decoded.payload, to: mapped, direction: .upload) {
-                return
-            }
+            guard let mapped = Self.numericAddress(address, port: port) else { return }
+            if send(decoded.payload, to: mapped, direction: .upload) { return }
+            // Synthesis is only for a missing route to a global address: NAT64
+            // doesn't translate LAN/special ranges, and a local error (buffer,
+            // size, broadcast permission) would repeat for the synthesized address.
+            guard !Self.isLocalSendError(errno),
+                  let ipv4 = IPv4Address(address), NetworkTCPRelay.isGlobalUnicast(ipv4) else { return }
             startResolution(key: key, host: address, payload: decoded.payload, port: port, literalIPv4: true)
 
         case .domain:
@@ -471,6 +484,12 @@ final class UdpAssociation {
             }
             startResolution(key: key, host: address, payload: decoded.payload, port: port, literalIPv4: false)
         }
+    }
+
+    /// sendto errors caused by this host (buffer, datagram size, broadcast
+    /// permission) rather than by the absence of a route.
+    private static func isLocalSendError(_ code: Int32) -> Bool {
+        [EAGAIN, EWOULDBLOCK, ENOBUFS, EMSGSIZE, EACCES].contains(code)
     }
 
     private func sendToFirst(_ payload: Data, _ destinations: [SocketAddress], port: UInt16) -> Bool {
@@ -764,8 +783,7 @@ final class UdpAssociation {
         }
         guard address.family == sa_family_t(AF_INET6), raw.count >= 24 else { return nil }
         let value = Array(raw[8..<24])
-        let isMapped = value.prefix(10).allSatisfy { $0 == 0 } && value[10] == 0xff && value[11] == 0xff
-        if isMapped {
+        if address.isIPv4Mapped {
             return (.ipv4, value.suffix(4).map(String.init).joined(separator: "."))
         }
         let text = value.enumerated().reduce(into: "") { result, item in

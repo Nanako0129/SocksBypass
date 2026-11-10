@@ -562,8 +562,8 @@ private final class RelaySession {
         queue.asyncAfter(deadline: .now() + Self.synthesisTimeoutSeconds, execute: timeout)
 
         // Off the relay queue: getaddrinfo() blocks and every session shares that
-        // queue. A concurrent queue, so one stalled lookup cannot hold up others.
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        // queue. Concurrent, so one stalled lookup cannot hold up others.
+        Self.synthesisQueue.addOperation { [weak self] in
             let host = Self.synthesizedHost(for: literal) ?? .ipv4(ipv4)
             self?.queue.async {
                 guard let self else { return }
@@ -576,9 +576,21 @@ private final class RelaySession {
         }
     }
 
-    /// getaddrinfo() on a numeric IPv4 string answers in microseconds unless
-    /// NAT64 prefix discovery is still running; this only bounds that case.
-    private static let synthesisTimeoutSeconds: Double = 2
+    /// Bounds a stalled lookup. The value is PR #27's; how long getaddrinfo takes
+    /// for a literal on a NAT64 network (e.g. during prefix discovery) is not
+    /// measured here.
+    private static let synthesisTimeoutSeconds: Double = 5
+
+    /// Capped so a burst of CONNECTs during a resolver stall blocks at most four
+    /// threads instead of growing GCD's pool; later lookups wait their turn and
+    /// their timeout dials the literal.
+    private static let synthesisQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.nanako.socksbypass.benchmark.relay.tcp-synthesis"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 4
+        return queue
+    }()
 
 
     private func connectTarget(host: NWEndpoint.Host, port: NWEndpoint.Port) {

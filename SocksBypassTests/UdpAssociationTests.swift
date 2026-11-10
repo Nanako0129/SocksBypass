@@ -231,6 +231,30 @@ final class UdpAssociationTests: XCTestCase {
         XCTAssertNil(stranger.receive(timeout: 0.2), "the stranger must not see the client's traffic")
     }
 
+    /// Verifier finding: after a stranger latched first, a declared client's
+    /// datagram that doesn't decode (FRAG = 1 is legal RFC 1928) fell through to
+    /// the peer path and was delivered verbatim to the stranger.
+    func testUndecodableDatagramFromDeclaredClientNeverReachesStranger() throws {
+        let queue = DispatchQueue(label: "UdpAssociationTests.declaredUndecodable")
+        let counters = TrafficCounters(queue: queue, enabled: true)
+        let echo = try UdpTestSocket(family: AF_INET)
+        let client = try UdpTestSocket(family: AF_INET)
+        let stranger = try UdpTestSocket(family: AF_INET)
+        let association = try makeDeclaredAssociation(queue: queue, counters: counters, declaredPort: client.port)
+        defer { queue.sync { association.cancel() } }
+
+        XCTAssertTrue(stranger.send(try envelope(to: echo.port, payload: Data([0x51])),
+                                    host: "127.0.0.1", port: association.localPort))
+        XCTAssertEqual(echo.receiveAndEcho(), Data([0x51]))
+        XCTAssertNotNil(stranger.receive())
+
+        var fragment = try envelope(to: echo.port, payload: Data([0xc0, 0xff, 0xee]))
+        fragment[2] = 1
+        XCTAssertTrue(client.send(fragment, host: "127.0.0.1", port: association.localPort))
+        XCTAssertNil(stranger.receive(timeout: 0.5), "the client's datagram must never reach the stranger")
+        XCTAssertNil(echo.receiveAndEcho(timeout: 0.2))
+    }
+
     /// Once the declared client has sent, nothing else can latch: a same-host
     /// stranger is peer traffic delivered to the client, and receives nothing.
     func testConfirmedDeclaredClientCannotBeReLatched() throws {
@@ -283,8 +307,8 @@ final class UdpAssociationTests: XCTestCase {
 
         let malformed = Data([0, 0, 1, 1, 127, 0, 0, 1, 0, 53, 0xaa])
         XCTAssertTrue(declaredPortOwner.send(malformed, host: "127.0.0.1", port: association.localPort))
-        // Peer traffic, wrapped and delivered to the discovered client.
-        XCTAssertNotNil(discovered.receive())
+        // Dropped: the declared endpoint is never peer traffic.
+        XCTAssertNil(discovered.receive(timeout: 0.2))
         let second = try envelope(to: echo.port, payload: Data([0xd2]))
         XCTAssertTrue(discovered.send(second, host: "127.0.0.1", port: association.localPort))
         XCTAssertEqual(echo.receiveAndEcho(), Data([0xd2]), "a malformed datagram must not take the association")
