@@ -290,8 +290,9 @@ private final class RelaySession {
     /// Bounds the getaddrinfo() round trip in beginTargetConnection's literal-IPv4
     /// synthesis path; that call runs off-queue and has no timeout of its own.
     private var synthesisTimeout: DispatchWorkItem?
-    /// The queued lookup, cancelled once its result can no longer be used so a
-    /// backlog of dead sessions doesn't hold synthesisQueue's slots.
+    /// The queued lookup, cancelled once its result can no longer be used. A
+    /// cancelled operation still waits for a slot but then skips getaddrinfo; one
+    /// already blocked in getaddrinfo keeps its slot until the call returns.
     private var synthesisOperation: Operation?
     private var clientReceivePending = false
     private var targetReceivePending = false
@@ -594,9 +595,9 @@ private final class RelaySession {
     /// measured here.
     private static let synthesisTimeoutSeconds: Double = 5
 
-    /// Capped so a burst of CONNECTs during a resolver stall blocks a bounded
-    /// number of threads instead of growing GCD's pool. Lookups whose session
-    /// timed out or closed are cancelled before they run.
+    /// Capped so a burst of CONNECTs during a resolver stall blocks at most 16
+    /// threads instead of growing GCD's pool. Lookups whose session timed out or
+    /// closed skip getaddrinfo when they reach a slot.
     private static let synthesisQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "com.nanako.socksbypass.benchmark.relay.tcp-synthesis"

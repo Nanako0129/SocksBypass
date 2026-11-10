@@ -609,6 +609,7 @@ final class UdpAssociation {
         committedBytes: Int? = nil
     ) -> Bool {
         assertQueue()
+        lastSendError = 0
         guard !closed, socketFD >= 0 else { return false }
 
         let count = data.withUnsafeBytes { dataPointer in
