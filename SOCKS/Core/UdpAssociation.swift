@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import Network
 
 /// The one UDP socket owned by a SOCKS5 UDP ASSOCIATE control connection.
 ///
@@ -172,12 +173,34 @@ final class UdpAssociation {
             }
             return bytes[8..<24] == other.bytes[8..<24]
         }
+
+        /// Host and port only. `matches` also compares sin6_scope_id and
+        /// sin6_flowinfo, which recvfrom fills for a link-local source while a
+        /// declared endpoint built from the control peer's address (scope
+        /// stripped) has them zero, so the declared client would never match.
+        func matchesHostAndPort(_ other: SocketAddress) -> Bool {
+            matchesHost(other) && port == other.port
+        }
+
+        /// The 16 raw address bytes alone, port and everything else stripped —
+        /// a stable key for host-only lookups.
+        var hostBytes: Data {
+            guard bytes.count >= 24 else { return Data() }
+            return bytes[8..<24]
+        }
+
+        /// ::ffff:a.b.c.d, the form every IPv4 destination takes on the
+        /// dual-stack socket.
+        var isIPv4Mapped: Bool {
+            let host = [UInt8](hostBytes)
+            return host.count == 16 && host.prefix(10).allSatisfy { $0 == 0 }
+                && host[10] == 0xff && host[11] == 0xff
+        }
     }
 
     private enum Resolution {
         case pending
         case resolved([SocketAddress])
-        case failed
     }
 
     private let queue: DispatchQueue
@@ -187,11 +210,39 @@ final class UdpAssociation {
     private var socketFD: Int32
     private var source: DispatchSourceRead?
     private var closed = false
+    /// Where peer traffic is delivered: the declared endpoint until something
+    /// confirms or replaces it (see handleReadable).
     private var clientAddress: SocketAddress?
     private let controlPeer: SocketAddress?
+    /// The endpoint the UDP ASSOCIATE request declared (control peer's host,
+    /// request's port), if any. It stays authoritative for the whole association.
+    private let declaredClient: SocketAddress?
+    /// The declared endpoint has sent a well-formed datagram; from then on the
+    /// association belongs to it and nothing else can latch.
+    private var declaredConfirmed = false
+    /// The one-shot discovery latch (first well-formed same-host sender) has been used.
+    private var discoveryUsed = false
     private var resolutions: [String: Resolution] = [:]
     /// Insertion order, so the cache can be evicted without a second index.
     private var resolutionOrder: [String] = []
+    /// Reverse of the above, ATYP IPv4 requests only: synthesized destination
+    /// host bytes back to the literal the client actually addressed it as.
+    /// Entries live exactly as long as the `ipv4:` resolution they came from
+    /// (removed in forgetResolution), so the map is bounded by the cache.
+    ///
+    /// A client that supplies a literal IPv4 target did its own resolution
+    /// and expects replies to appear to come from exactly that literal. When
+    /// the real send has to go out over a NAT64-synthesized address instead
+    /// (an IPv6-only network, no route for the literal itself), a reply's
+    /// source is that synthesized address, not the literal — reporting it
+    /// as-is hands the client a SOCKS5 UDP header whose source doesn't match
+    /// anything it dialed. A client tracking flows by that literal (seen on
+    /// tun2socks: "symmetric NAT ... drop packet from [64:ff9b::...]")
+    /// rejects the reply outright. This maps the observed source back to
+    /// what the client actually asked for.
+    private var literalIPv4ByDestinationHost: [Data: String] = [:]
+    /// errno of the last failed sendto, captured right after the call.
+    private var lastSendError: Int32 = 0
     private var pendingResolutions = 0
     /// At most one datagram per in-flight lookup, replayed once it resolves.
     private var pendingDatagrams: [String: (payload: Data, port: UInt16)] = [:]
@@ -218,9 +269,10 @@ final class UdpAssociation {
         // it closes the window where another process on the same host claims the
         // association by getting a well-formed datagram in first. An unspecified
         // endpoint still falls back to discovery.
-        clientAddress = declaredClientEndpoint.flatMap {
+        declaredClient = declaredClientEndpoint.flatMap {
             Self.numericAddress($0.address, port: $0.port)
         }
+        clientAddress = declaredClient
         controlPeer = controlPeerAddress.flatMap { Self.numericAddress($0, port: 0) }
         resolutionQueue = DispatchQueue(
             label: "com.nanako.socksbypass.benchmark.udp-dns",
@@ -334,99 +386,178 @@ final class UdpAssociation {
 
         let sourceAddress = Self.socketAddress(storage: storage, length: length)
         let packet = Data(data.prefix(Int(count)))
-        if let clientAddress {
-            if sourceAddress.matches(clientAddress) {
-                handleClientDatagram(packet)
-            } else {
-                // There is intentionally no destination/NAT table. Every datagram
-                // from a non-client source is a peer payload and is wrapped verbatim
-                // with the address recvfrom reported. Never inspect its content to
-                // decide the role of the sender.
-                handlePeerDatagram(packet, from: sourceAddress)
+        // Role is decided by source address. The envelope is inspected only as a
+        // precondition for *becoming* the client (rules 1 and 3), never to decide
+        // whether a sender that is not the client is a peer.
+        if let declaredClient, sourceAddress.matchesHostAndPort(declaredClient) {
+            // Never peer traffic, even before it confirms: forwarding it as a peer
+            // payload would hand it to whoever discovery latched. A datagram that
+            // doesn't decode (FRAG != 0, malformed) is dropped, as for any client.
+            guard declaredConfirmed || DatagramHeader.decode(packet) != nil else { return }
+            // Rule 1: the declared endpoint wins whenever it actually sends, even
+            // over an earlier discovery latch, so a correct declaration keeps the
+            // guarantee that a same-host stranger never receives the client's
+            // payload. Accepted residual: when the declaration is wrong, whoever
+            // later owns that declared port can take the association back from the
+            // discovered client. The proxy cannot tell that ordering apart from a
+            // stranger latching first ahead of a correctly declared client, and
+            // this direction is never weaker than honouring the declaration alone.
+            if !declaredConfirmed {
+                declaredConfirmed = true
+                clientAddress = sourceAddress
             }
-        } else {
-            // Only the TCP control connection's peer may claim the association, and
-            // only with a well-formed envelope. Latching the first arbitrary sender
-            // let any host that guessed the ephemeral port take over the association
-            // and receive the real client's payload as if it were peer traffic.
-            guard let controlPeer, sourceAddress.matchesHost(controlPeer),
-                  DatagramHeader.decode(packet) != nil else {
-                return
-            }
+            handleClientDatagram(packet)
+        } else if let clientAddress, sourceAddress.matches(clientAddress) {
+            // Rule 2: the discovered client.
+            handleClientDatagram(packet)
+        } else if !declaredConfirmed, !discoveryUsed,
+                  let controlPeer, sourceAddress.matchesHost(controlPeer),
+                  DatagramHeader.decode(packet) != nil {
+            // Rule 3, one-shot discovery: only the TCP control connection's host may
+            // claim the association, and only with a well-formed envelope. Latching
+            // the first arbitrary sender let any host that guessed the ephemeral
+            // port take over and receive the real client's payload as peer traffic.
+            // This also covers clients that declare a port they never send from
+            // (seen with Shadowrocket): without it every datagram they send is
+            // misfiled as a peer reply and never reaches upstream. With a correct
+            // declaration, a same-host stranger that latches first holds the
+            // association only until the declared client sends (rule 1) and never
+            // receives that client's datagrams. With a wrong or missing declaration
+            // a stranger that sends first takes the client role and receives the
+            // real client's traffic as peer payload: the same race main has always
+            // accepted for undeclared clients.
+            discoveryUsed = true
             clientAddress = sourceAddress
             handleClientDatagram(packet)
+        } else {
+            // Rule 4: everything else is a peer payload, wrapped verbatim and sent
+            // to the client (dropped while there is none). The only translation is
+            // the source label for NAT64-synthesized replies to literal IPv4
+            // destinations; see literalIPv4ByDestinationHost.
+            handlePeerDatagram(packet, from: sourceAddress)
         }
     }
 
     private func handleClientDatagram(_ packet: Data) {
         assertQueue()
         guard !closed, let decoded = DatagramHeader.decode(packet) else { return }
+        let address = decoded.header.address
+        let port = decoded.header.port
 
         switch decoded.header.addressType {
-        case .ipv4, .ipv6:
-            guard let destination = Self.numericAddress(
-                decoded.header.address,
-                port: decoded.header.port
-            ) else { return }
+        case .ipv6:
+            guard let destination = Self.numericAddress(address, port: port) else { return }
             _ = send(decoded.payload, to: destination, direction: .upload)
 
-        case .domain:
-            let key = decoded.header.address.lowercased()
-            switch resolutions[key] {
-            case .resolved(let destinations):
+        case .ipv4:
+            // The ::ffff:-mapped send is the normal path and stays synchronous, so
+            // dual-stack and IPv4 networks behave exactly as before. On an
+            // IPv6-only network that send fails (no IPv4 route), and only then is
+            // the literal put through getaddrinfo, which synthesizes a NAT64
+            // address for it the same way it does for a hostname; inet_pton never
+            // does. The key is prefixed so an ATYP-domain request for the same
+            // dotted string keeps its own entry. Assumption, not measured here:
+            // sendto to a mapped address fails synchronously on an IPv6-only
+            // interface rather than succeeding and vanishing.
+            let key = "ipv4:" + address
+            if case .resolved(let destinations) = resolutions[key] {
+                var routeFailed = false
                 for destination in destinations {
-                    if send(
-                        decoded.payload,
-                        to: destination.withPort(decoded.header.port),
-                        direction: .upload
-                    ) {
-                        break
+                    if send(decoded.payload, to: destination.withPort(port), direction: .upload) { return }
+                    if !Self.isLocalSendError(lastSendError) { routeFailed = true }
+                }
+                // Only local errors (full buffer, oversized datagram) say nothing
+                // about the route: drop this datagram, keep the entry and its labels.
+                guard routeFailed else { return }
+                // A synthesized address has no route: the network changed under the
+                // association. Drop the entry and its reply labels, try mapped.
+                forgetResolution(key)
+            }
+            guard let mapped = Self.numericAddress(address, port: port) else { return }
+            if send(decoded.payload, to: mapped, direction: .upload) { return }
+            // Synthesis is only for a missing route to a global address: NAT64
+            // doesn't translate LAN/special ranges, and a local error (buffer,
+            // size, broadcast permission) would repeat for the synthesized address.
+            guard !Self.isLocalSendError(lastSendError),
+                  let ipv4 = IPv4Address(address), NetworkTCPRelay.isGlobalUnicast(ipv4) else { return }
+            startResolution(key: key, host: address, payload: decoded.payload, port: port, literalIPv4: true)
+
+        case .domain:
+            let key = address.lowercased()
+            if case .resolved(let destinations) = resolutions[key] {
+                _ = sendToFirst(decoded.payload, destinations, port: port)
+                return
+            }
+            startResolution(key: key, host: address, payload: decoded.payload, port: port, literalIPv4: false)
+        }
+    }
+
+    /// sendto errors caused by this host (buffer, datagram size, broadcast
+    /// permission) rather than by the absence of a route.
+    private static func isLocalSendError(_ code: Int32) -> Bool {
+        [EAGAIN, EWOULDBLOCK, ENOBUFS, EMSGSIZE, EACCES].contains(code)
+    }
+
+    private func sendToFirst(_ payload: Data, _ destinations: [SocketAddress], port: UInt16) -> Bool {
+        destinations.contains { send(payload, to: $0.withPort(port), direction: .upload) }
+    }
+
+    private func startResolution(key: String, host: String, payload: Data, port: UInt16, literalIPv4: Bool) {
+        assertQueue()
+        guard resolutions[key] == nil, pendingResolutions < Self.pendingResolutionLimit else { return }
+        pendingResolutions += 1
+        resolutions[key] = .pending
+        resolutionOrder.append(key)
+        // The datagram that triggered the lookup used to be dropped, so every
+        // unseen domain silently lost its first packet: one-shot protocols failed
+        // outright and DNS ate a timeout before a retry could use the cache. One
+        // datagram is held per in-flight lookup, which the concurrent-lookup cap
+        // already bounds.
+        pendingDatagrams[key] = (payload, port)
+        evictResolutions()
+        resolutionQueue.async { [weak self] in
+            var result = Self.resolve(host)
+            // For a literal the mapped address just failed; keep only what
+            // getaddrinfo synthesized.
+            if literalIPv4 { result.removeAll { $0.isIPv4Mapped } }
+            self?.queue.async { [weak self] in
+                guard let self, !self.closed else { return }
+                self.pendingResolutions -= 1
+                let queued = self.pendingDatagrams.removeValue(forKey: key)
+                guard self.resolutions[key] != nil else { return }
+                guard !result.isEmpty else {
+                    // A transient resolver failure must not black-hole the name for
+                    // the life of the association: an association can stay open
+                    // indefinitely, so a cached failure outlives the outage that
+                    // caused it. Dropping the entry lets the next datagram retry,
+                    // and the concurrent-lookup cap still bounds the retries.
+                    self.forgetResolution(key)
+                    return
+                }
+                self.resolutions[key] = .resolved(result)
+                if literalIPv4 {
+                    for destination in result {
+                        self.literalIPv4ByDestinationHost[destination.hostBytes] = host
                     }
                 }
-            case .pending, .failed:
-                return
-            case nil:
-                guard pendingResolutions < Self.pendingResolutionLimit else { return }
-                pendingResolutions += 1
-                resolutions[key] = .pending
-                resolutionOrder.append(key)
-                // The datagram that triggered the lookup used to be dropped, so
-                // every unseen domain silently lost its first packet: one-shot
-                // protocols failed outright and DNS ate a timeout before a retry
-                // could use the cache. One datagram is held per in-flight lookup,
-                // which the concurrent-lookup cap already bounds.
-                pendingDatagrams[key] = (decoded.payload, decoded.header.port)
-                evictResolutions()
-                let host = decoded.header.address
-                resolutionQueue.async { [weak self] in
-                    let result = Self.resolve(host)
-                    self?.queue.async { [weak self] in
-                        guard let self, !self.closed else { return }
-                        self.pendingResolutions -= 1
-                        let queued = self.pendingDatagrams.removeValue(forKey: key)
-                        guard self.resolutions[key] != nil else { return }
-                        guard !result.isEmpty else {
-                            // A transient resolver failure must not black-hole the
-                            // name for the life of the association: an association
-                            // can stay open indefinitely, so a cached failure
-                            // outlives the outage that caused it. Dropping the
-                            // entry lets the next datagram retry, and the
-                            // concurrent-lookup cap still bounds the retries.
-                            self.resolutions.removeValue(forKey: key)
-                            self.resolutionOrder.removeAll { $0 == key }
-                            return
-                        }
-                        self.resolutions[key] = .resolved(result)
-                        guard let queued else { return }
-                        for destination in result
-                        where self.send(queued.payload, to: destination.withPort(queued.port),
-                                        direction: .upload) {
-                            break
-                        }
-                    }
+                if let queued {
+                    _ = self.sendToFirst(queued.payload, result, port: queued.port)
                 }
             }
         }
+    }
+
+    /// Removes a cache entry together with the reply labels derived from it, so
+    /// literalIPv4ByDestinationHost never outlives its resolution.
+    private func forgetResolution(_ key: String) {
+        assertQueue()
+        if case .resolved(let destinations) = resolutions[key], key.hasPrefix("ipv4:") {
+            for destination in destinations {
+                literalIPv4ByDestinationHost.removeValue(forKey: destination.hostBytes)
+            }
+        }
+        resolutions.removeValue(forKey: key)
+        resolutionOrder.removeAll { $0 == key }
     }
 
     /// Drops the oldest settled entries once the cache is over its limit. Pending
@@ -441,15 +572,25 @@ final class UdpAssociation {
                 index += 1
                 continue
             }
-            resolutions.removeValue(forKey: key)
-            resolutionOrder.remove(at: index)
+            forgetResolution(key)
         }
     }
 
     private func handlePeerDatagram(_ payload: Data, from sourceAddress: SocketAddress) {
         assertQueue()
-        guard !closed, let clientAddress,
-              let (addressType, address) = Self.headerAddress(sourceAddress),
+        guard !closed, let clientAddress else { return }
+
+        // If this peer is answering a literal IPv4 the client dialed, report it
+        // back as that literal even though the real send went out over a
+        // NAT64-synthesized address — see literalIPv4ByDestinationHost.
+        let resolvedAddress: (AddressType, String)?
+        if let literal = literalIPv4ByDestinationHost[sourceAddress.hostBytes] {
+            resolvedAddress = (.ipv4, literal)
+        } else {
+            resolvedAddress = Self.headerAddress(sourceAddress)
+        }
+
+        guard let (addressType, address) = resolvedAddress,
               let packet = DatagramHeader.encode(
                 addressType: addressType,
                 address: address,
@@ -468,12 +609,13 @@ final class UdpAssociation {
         committedBytes: Int? = nil
     ) -> Bool {
         assertQueue()
+        lastSendError = 0
         guard !closed, socketFD >= 0 else { return false }
 
         let count = data.withUnsafeBytes { dataPointer in
             destination.bytes.withUnsafeBytes { addressPointer in
                 guard let address = addressPointer.baseAddress else { return -1 }
-                return Darwin.sendto(
+                let sent = Darwin.sendto(
                     socketFD,
                     dataPointer.baseAddress,
                     data.count,
@@ -481,6 +623,8 @@ final class UdpAssociation {
                     address.assumingMemoryBound(to: sockaddr.self),
                     destination.length
                 )
+                if sent < 0 { lastSendError = errno }
+                return sent
             }
         }
         guard count == data.count else { return false }
@@ -648,8 +792,7 @@ final class UdpAssociation {
         }
         guard address.family == sa_family_t(AF_INET6), raw.count >= 24 else { return nil }
         let value = Array(raw[8..<24])
-        let isMapped = value.prefix(10).allSatisfy { $0 == 0 } && value[10] == 0xff && value[11] == 0xff
-        if isMapped {
+        if address.isIPv4Mapped {
             return (.ipv4, value.suffix(4).map(String.init).joined(separator: "."))
         }
         let text = value.enumerated().reduce(into: "") { result, item in
