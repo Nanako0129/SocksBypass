@@ -241,6 +241,8 @@ final class UdpAssociation {
     /// rejects the reply outright. This maps the observed source back to
     /// what the client actually asked for.
     private var literalIPv4ByDestinationHost: [Data: String] = [:]
+    /// errno of the last failed sendto, captured right after the call.
+    private var lastSendError: Int32 = 0
     private var pendingResolutions = 0
     /// At most one datagram per in-flight lookup, replayed once it resolves.
     private var pendingDatagrams: [String: (payload: Data, port: UInt16)] = [:]
@@ -459,11 +461,15 @@ final class UdpAssociation {
             // interface rather than succeeding and vanishing.
             let key = "ipv4:" + address
             if case .resolved(let destinations) = resolutions[key] {
-                if sendToFirst(decoded.payload, destinations, port: port) { return }
-                // A full buffer or an oversized datagram says nothing about the
-                // route; drop this datagram and keep the entry and its reply labels.
-                if Self.isLocalSendError(errno) { return }
-                // Every synthesized address failed: the network changed under the
+                var routeFailed = false
+                for destination in destinations {
+                    if send(decoded.payload, to: destination.withPort(port), direction: .upload) { return }
+                    if !Self.isLocalSendError(lastSendError) { routeFailed = true }
+                }
+                // Only local errors (full buffer, oversized datagram) say nothing
+                // about the route: drop this datagram, keep the entry and its labels.
+                guard routeFailed else { return }
+                // A synthesized address has no route: the network changed under the
                 // association. Drop the entry and its reply labels, try mapped.
                 forgetResolution(key)
             }
@@ -472,7 +478,7 @@ final class UdpAssociation {
             // Synthesis is only for a missing route to a global address: NAT64
             // doesn't translate LAN/special ranges, and a local error (buffer,
             // size, broadcast permission) would repeat for the synthesized address.
-            guard !Self.isLocalSendError(errno),
+            guard !Self.isLocalSendError(lastSendError),
                   let ipv4 = IPv4Address(address), NetworkTCPRelay.isGlobalUnicast(ipv4) else { return }
             startResolution(key: key, host: address, payload: decoded.payload, port: port, literalIPv4: true)
 
@@ -608,7 +614,7 @@ final class UdpAssociation {
         let count = data.withUnsafeBytes { dataPointer in
             destination.bytes.withUnsafeBytes { addressPointer in
                 guard let address = addressPointer.baseAddress else { return -1 }
-                return Darwin.sendto(
+                let sent = Darwin.sendto(
                     socketFD,
                     dataPointer.baseAddress,
                     data.count,
@@ -616,6 +622,8 @@ final class UdpAssociation {
                     address.assumingMemoryBound(to: sockaddr.self),
                     destination.length
                 )
+                if sent < 0 { lastSendError = errno }
+                return sent
             }
         }
         guard count == data.count else { return false }

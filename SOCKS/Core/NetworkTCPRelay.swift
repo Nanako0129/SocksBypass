@@ -209,13 +209,16 @@ final class NetworkTCPRelay {
     }
 
     /// Global unicast IPv4: not 0/8, 10/8, 100.64/10, 127/8, 169.254/16,
-    /// 172.16/12, 192.168/16, 224/4 (multicast) or 240/4 (reserved, broadcast).
+    /// 172.16/12, 192.0.0/24, 192.0.2/24, 192.168/16, 198.18/15,
+    /// 198.51.100/24, 203.0.113/24, 224/4 (multicast) or 240/4 (reserved,
+    /// broadcast): RFC 6052 forbids the well-known NAT64 prefix for these.
     static func isGlobalUnicast(_ address: IPv4Address) -> Bool {
         let b = [UInt8](address.rawValue)
-        switch (b[0], b[1]) {
-        case (0, _), (10, _), (127, _), (169, 254), (192, 168): return false
-        case (100, 64...127), (172, 16...31): return false
-        case (224..., _): return false
+        switch (b[0], b[1], b[2]) {
+        case (0, _, _), (10, _, _), (127, _, _), (169, 254, _), (192, 168, _): return false
+        case (100, 64...127, _), (172, 16...31, _), (198, 18...19, _): return false
+        case (192, 0, 0), (192, 0, 2), (198, 51, 100), (203, 0, 113): return false
+        case (224..., _, _): return false
         default: return true
         }
     }
@@ -287,6 +290,9 @@ private final class RelaySession {
     /// Bounds the getaddrinfo() round trip in beginTargetConnection's literal-IPv4
     /// synthesis path; that call runs off-queue and has no timeout of its own.
     private var synthesisTimeout: DispatchWorkItem?
+    /// The queued lookup, cancelled once its result can no longer be used so a
+    /// backlog of dead sessions doesn't hold synthesisQueue's slots.
+    private var synthesisOperation: Operation?
     private var clientReceivePending = false
     private var targetReceivePending = false
     // A receive must never overtake the send carrying the previous payload. The
@@ -554,6 +560,8 @@ private final class RelaySession {
         let timeout = DispatchWorkItem { [weak self] in
             guard let self, self.synthesisTimeout != nil else { return }
             self.synthesisTimeout = nil
+            self.synthesisOperation?.cancel()
+            self.synthesisOperation = nil
             // A slow lookup must not fail the CONNECT: dial the literal, which is
             // exactly what happened before synthesis existed.
             self.connectTarget(host: .ipv4(ipv4), port: port)
@@ -562,8 +570,10 @@ private final class RelaySession {
         queue.asyncAfter(deadline: .now() + Self.synthesisTimeoutSeconds, execute: timeout)
 
         // Off the relay queue: getaddrinfo() blocks and every session shares that
-        // queue. Concurrent, so one stalled lookup cannot hold up others.
-        Self.synthesisQueue.addOperation { [weak self] in
+        // queue. Concurrent, so a few stalled lookups don't hold up the rest.
+        let operation = BlockOperation()
+        operation.addExecutionBlock { [weak self, unowned operation] in
+            guard !operation.isCancelled else { return }
             let host = Self.synthesizedHost(for: literal) ?? .ipv4(ipv4)
             self?.queue.async {
                 guard let self else { return }
@@ -571,9 +581,12 @@ private final class RelaySession {
                 guard let pending = self.synthesisTimeout else { return }
                 pending.cancel()
                 self.synthesisTimeout = nil
+                self.synthesisOperation = nil
                 self.connectTarget(host: host, port: port)
             }
         }
+        synthesisOperation = operation
+        Self.synthesisQueue.addOperation(operation)
     }
 
     /// Bounds a stalled lookup. The value is PR #27's; how long getaddrinfo takes
@@ -581,14 +594,14 @@ private final class RelaySession {
     /// measured here.
     private static let synthesisTimeoutSeconds: Double = 5
 
-    /// Capped so a burst of CONNECTs during a resolver stall blocks at most four
-    /// threads instead of growing GCD's pool; later lookups wait their turn and
-    /// their timeout dials the literal.
+    /// Capped so a burst of CONNECTs during a resolver stall blocks a bounded
+    /// number of threads instead of growing GCD's pool. Lookups whose session
+    /// timed out or closed are cancelled before they run.
     private static let synthesisQueue: OperationQueue = {
         let queue = OperationQueue()
         queue.name = "com.nanako.socksbypass.benchmark.relay.tcp-synthesis"
         queue.qualityOfService = .utility
-        queue.maxConcurrentOperationCount = 4
+        queue.maxConcurrentOperationCount = 16
         return queue
     }()
 
@@ -1036,6 +1049,8 @@ private final class RelaySession {
         handshakeTimeout = nil
         synthesisTimeout?.cancel()
         synthesisTimeout = nil
+        synthesisOperation?.cancel()
+        synthesisOperation = nil
         gracefulCloseTimeout?.cancel()
         gracefulCloseTimeout = nil
 
